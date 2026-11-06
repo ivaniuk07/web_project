@@ -1,0 +1,87 @@
+name: subtitle-studio
+
+x-app: &app
+  build: .
+  image: subtitle-studio:local
+  env_file: .env
+  environment: &app-environment
+    POSTGRES_HOST: postgres
+    MEDIA_ROOT: /app/media
+  volumes:
+    - media:/app/media
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-subtitles}
+      POSTGRES_USER: ${POSTGRES_USER:-subtitles}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-subtitles-local-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis1:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis2:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    <<: *app
+    command: >-
+      sh -c "python manage.py migrate --noinput &&
+      python manage.py runserver 0.0.0.0:8000 --noreload"
+    ports:
+      - '127.0.0.1:8001:8000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+
+  worker1:
+    <<: *app
+    command: [celery, -A, config, worker, -l, info, --concurrency=1, --prefetch-multiplier=1]
+    environment:
+      <<: *app-environment
+      CELERY_BROKER_URL: redis://redis1:6379/0
+    depends_on:
+      web:
+        condition: service_healthy
+      redis1:
+        condition: service_healthy
+
+  worker2:
+    <<: *app
+    command: [celery, -A, config, worker, -l, info, --concurrency=1, --prefetch-multiplier=1]
+    environment:
+      <<: *app-environment
+      CELERY_BROKER_URL: redis://redis2:6379/0
+    depends_on:
+      web:
+        condition: service_healthy
+      redis2:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  media:

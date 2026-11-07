@@ -1,47 +1,20 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Генератор субтитрів</title>
-</head>
-<body>
-    <h1>Генератор субтитрів</h1>
-    <p>Завантажте відео та натисніть «Створити відео із субтитрами». Обробка може тривати кілька хвилин.</p>
-    {% for message in messages %}
-        <p role="status">{{ message }}</p>
+{% extends 'base.html' %}
+{% block content %}
+<h2>Завантажити відео</h2>
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Завантажити відео</button>
+</form>
+<h2>Мої завдання</h2>
+<ul>
+    {% for job in jobs %}
+        <li>
+            <a href="{% url 'job_detail' job.pk %}">{{ job.original_name }}</a>
+            — {{ job.get_status_display }} — {{ job.created_at|date:'d.m.Y H:i' }}
+        </li>
+    {% empty %}
+        <li>Поки що завдань немає.</li>
     {% endfor %}
-    <form method="post" enctype="multipart/form-data">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Завантажити відео</button>
-    </form>
-    <h2>Завантажені файли</h2>
-    <ul>
-        {% for file in files %}
-            <li>
-                {{ file.name }}
-                {% if file.video_ready %}
-                    <p>
-                        <video controls preload="metadata" width="640" style="max-width: 100%;">
-                            <source src="{% url 'video_result' file.name %}" type="video/mp4">
-                            Ваш браузер не підтримує відтворення відео.
-                        </video>
-                    </p>
-                    <p><a href="{% url 'video_result' file.name %}?download=1">Завантажити відео</a></p>
-                {% else %}
-                    <form method="post" action="{% url 'process_video' file.name %}">
-                        {% csrf_token %}
-                        <button type="submit">Створити відео із субтитрами</button>
-                    </form>
-                {% endif %}
-                {% if file.ready %}
-                    <p><a href="{% url 'download_subtitles' file.name %}">Завантажити SRT</a></p>
-                {% endif %}
-            </li>
-        {% empty %}
-            <li>Поки що файлів немає.</li>
-        {% endfor %}
-    </ul>
-</body>
-</html>
+</ul>
+{% endblock %}

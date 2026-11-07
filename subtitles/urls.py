@@ -1,9 +1,10 @@
 from django.urls import path
-from .views import home, process_video, download_subtitles, video_result
+from . import views
 
 urlpatterns = [
-    path('', home, name='home'),
-    path('process/<str:filename>/', process_video, name='process_video'),
-    path('download/<str:filename>/', download_subtitles, name='download_subtitles'),
-    path('video/<str:filename>/', video_result, name='video_result'),
+    path('', views.home, name='home'),
+    path('jobs/<uuid:job_id>/', views.job_detail, name='job_detail'),
+    path('process/<uuid:job_id>/', views.process_video, name='process_video'),
+    path('download/<uuid:job_id>/', views.download_subtitles, name='download_subtitles'),
+    path('video/<uuid:job_id>/', views.video_result, name='video_result'),
 ]

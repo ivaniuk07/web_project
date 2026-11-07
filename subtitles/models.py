@@ -1,0 +1,36 @@
+import uuid
+from pathlib import Path
+
+from django.conf import settings
+from django.db import models
+
+
+def video_upload_path(job, filename):
+    return f'videos/{job.pk}{Path(filename).suffix.lower()}'
+
+
+class Job(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = 'queued', 'Очікує обробки'
+        RUNNING = 'running', 'Обробляється'
+        SUCCEEDED = 'succeeded', 'Завершено'
+        FAILED = 'failed', 'Помилка'
+        CANCELLED = 'cancelled', 'Скасовано'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='jobs')
+    original_name = models.CharField(max_length=255)
+    source = models.FileField(upload_to=video_upload_path, unique=True, max_length=512)
+    subtitles = models.FileField(upload_to='subtitles/', blank=True, max_length=512)
+    result = models.FileField(upload_to='rendered/', blank=True, max_length=512)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    node_name = models.CharField(max_length=100, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.original_name

@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block head %}
+{% if job.status == 'running' %}<meta http-equiv="refresh" content="5">{% endif %}
+{% endblock %}
+{% block content %}
+<h2>{{ job.original_name }}</h2>
+<p>Стан — {{ job.get_status_display }}</p>
+<p>Створено {{ job.created_at|date:'d.m.Y H:i' }}</p>
+{% if job.node_name %}<p>Вузол — {{ job.node_name }}</p>{% endif %}
+{% if job.error %}<p role="alert">{{ job.error }}</p>{% endif %}
+{% if can_process %}
+    <form method="post" action="{% url 'process_video' job.pk %}">
+        {% csrf_token %}
+        <button type="submit">Створити відео із субтитрами</button>
+    </form>
+    <p>Обробка може тривати кілька хвилин. Дочекайтеся завершення запиту.</p>
+{% endif %}
+{% if job.status == 'succeeded' and job.result %}
+    <p>
+        <video controls preload="metadata" width="640" style="max-width: 100%;">
+            <source src="{% url 'video_result' job.pk %}" type="video/mp4">
+            Ваш браузер не підтримує відтворення відео.
+        </video>
+    </p>
+    <p><a href="{% url 'video_result' job.pk %}?download=1">Завантажити відео</a></p>
+{% endif %}
+{% if job.subtitles %}<p><a href="{% url 'download_subtitles' job.pk %}">Завантажити SRT</a></p>{% endif %}
+<p><a href="{% url 'home' %}">Мої завдання</a></p>
+{% endblock %}

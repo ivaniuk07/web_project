@@ -1,99 +1,161 @@
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
+from django.urls import reverse
+
+from subtitles.models import Job
+from subtitles.processing import ProcessingError
 
 
-class HomeTests(TestCase):
-    def test_home_shows_upload_form(self):
+class JobViewTests(TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.media = override_settings(MEDIA_ROOT=self.directory.name)
+        self.media.enable()
+        self.addCleanup(self.media.disable)
+        self.user = get_user_model().objects.create_user('alice', password='test-password-142')
+        self.other = get_user_model().objects.create_user('bob', password='test-password-242')
+        self.client.force_login(self.user)
+        self.job = Job.objects.create(owner=self.user, original_name='lesson.mp4', source='videos/lesson.mp4')
+        source = Path(self.job.source.path)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b'video')
+
+    def test_anonymous_redirects_to_login(self):
+        self.client.logout()
+        for url in ('/', reverse('job_detail', args=[self.job.pk]), reverse('process_video', args=[self.job.pk]), reverse('video_result', args=[self.job.pk]), reverse('download_subtitles', args=[self.job.pk])):
+            self.assertEqual(self.client.get(url).status_code, 302)
+
+    def test_registration_logs_in(self):
+        self.client.logout()
+        response = self.client.post(reverse('register'), {'username': 'charlie', 'password1': 'Unique-password-142!', 'password2': 'Unique-password-142!'})
+        self.assertRedirects(response, '/')
+        self.assertEqual(self.client.get('/').wsgi_request.user.username, 'charlie')
+
+    def test_login_and_post_logout(self):
+        self.client.logout()
+        self.assertRedirects(self.client.post(reverse('login'), {'username': 'alice', 'password': 'test-password-142'}), '/')
+        self.assertEqual(self.client.get(reverse('logout')).status_code, 405)
+        self.assertRedirects(self.client.post(reverse('logout')), reverse('login'))
+
+    def test_history_only_shows_own_jobs(self):
+        Job.objects.create(owner=self.other, original_name='private-bob.mp4', source='videos/bob.mp4')
         response = self.client.get('/')
-        self.assertContains(response, 'Завантажити відео')
+        self.assertContains(response, 'lesson.mp4')
+        self.assertNotContains(response, 'private-bob.mp4')
 
-    def test_upload_saves_file_and_lists_it(self):
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            video = SimpleUploadedFile('lesson.mp4', b'demo-video', content_type='video/mp4')
-            response = self.client.post('/', {'video': video})
-            self.assertRedirects(response, '/')
-            files = list((Path(root) / 'videos').iterdir())
-            self.assertEqual(len(files), 1)
-            self.assertEqual(files[0].read_bytes(), b'demo-video')
-            self.assertContains(self.client.get('/'), 'lesson')
+    def test_foreign_job_is_inaccessible_for_all_actions(self):
+        self.client.force_login(self.other)
+        for name in ('job_detail', 'video_result', 'download_subtitles'):
+            self.assertEqual(self.client.get(reverse(name, args=[self.job.pk])).status_code, 404)
+        self.assertEqual(self.client.post(reverse('process_video', args=[self.job.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('video_result', args=[self.job.pk]) + '?download=1').status_code, 404)
 
-    def test_invalid_extension_is_rejected(self):
-        video = SimpleUploadedFile('file.txt', b'text')
-        response = self.client.post('/', {'video': video})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('video', response.context['form'].errors)
+    def test_upload_persists_owner_and_file(self):
+        response = self.client.post('/', {'video': SimpleUploadedFile('new.mp4', b'new-video')})
+        job = Job.objects.get(original_name='new.mp4')
+        self.assertRedirects(response, reverse('job_detail', args=[job.pk]))
+        self.assertEqual(job.owner, self.user)
+        self.assertEqual(Path(job.source.path).read_bytes(), b'new-video')
+        self.assertEqual(job.status, Job.Status.QUEUED)
 
-    def test_empty_upload_shows_error(self):
-        response = self.client.post('/')
-        self.assertIn('video', response.context['form'].errors)
+    def test_empty_and_invalid_upload(self):
+        for data in ({}, {'video': SimpleUploadedFile('bad.txt', b'text')}):
+            self.assertIn('video', self.client.post('/', data).context['form'].errors)
 
-    def test_process_missing_file_returns_404(self):
-        self.assertEqual(self.client.post('/process/missing.mp4/').status_code, 404)
-
-    def test_download_srt(self):
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            output = Path(root) / 'subtitles'
-            output.mkdir()
-            (output / 'video.mp4.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\nHello\n', encoding='utf-8')
-            response = self.client.get('/download/video.mp4/')
-            self.assertEqual(response.status_code, 200)
-            self.assertIn(b'Hello', b''.join(response.streaming_content))
-
-    def test_process_error_is_shown_on_page(self):
-        from unittest.mock import patch
-        from subtitles.processing import ProcessingError
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            videos = Path(root) / 'videos'
-            videos.mkdir()
-            (videos / 'broken.mp4').write_bytes(b'broken')
-            with patch('subtitles.processing.generate_subtitles', side_effect=ProcessingError('Файл пошкоджений.')):
-                response = self.client.post('/process/broken.mp4/', follow=True)
-            self.assertContains(response, 'Файл пошкоджений.')
-
-    def test_process_creates_download_link(self):
-        from unittest.mock import patch
+    def test_processing_success_records_results_and_prevents_duplicate_work(self):
         def generate(source, destination):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('1\n00:00:00,000 --> 00:00:01,000\nHello\n', encoding='utf-8')
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            videos = Path(root) / 'videos'
-            videos.mkdir()
-            (videos / 'lesson.mp4').write_bytes(b'video')
-            with patch('subtitles.processing.generate_subtitles', side_effect=generate), patch('subtitles.processing.burn_subtitles'):
-                response = self.client.post('/process/lesson.mp4/', follow=True)
-            self.assertContains(response, 'Завантажити SRT')
-            self.assertContains(response, '/download/lesson.mp4/')
+        def render(source, captions, destination):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b'mp4-result')
+        with patch('subtitles.services.generate_subtitles', side_effect=generate) as transcribe, patch('subtitles.services.burn_subtitles', side_effect=render):
+            response = self.client.post(reverse('process_video', args=[self.job.pk]), follow=True)
+            self.client.post(reverse('process_video', args=[self.job.pk]))
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, Job.Status.SUCCEEDED)
+        self.assertEqual(transcribe.call_count, 1)
+        self.assertContains(response, '<video')
+        self.assertContains(response, 'Завантажити SRT')
+        self.assertEqual(b''.join(self.client.get(reverse('video_result', args=[self.job.pk])).streaming_content), b'mp4-result')
+        download = self.client.get(reverse('video_result', args=[self.job.pk]) + '?download=1')
+        self.assertTrue(download['Content-Disposition'].startswith('attachment'))
+        self.assertEqual(b''.join(download.streaming_content), b'mp4-result')
+        self.assertIn(b'Hello', b''.join(self.client.get(reverse('download_subtitles', args=[self.job.pk])).streaming_content))
 
-    def test_video_preview_and_download(self):
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            output = Path(root) / 'rendered'
-            output.mkdir()
-            (output / 'lesson.mp4.mp4').write_bytes(b'processed-video')
-            response = self.client.get('/video/lesson.mp4/')
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response['Content-Type'], 'video/mp4')
-            self.assertTrue(response['Content-Disposition'].startswith('inline'))
-            self.assertEqual(b''.join(response.streaming_content), b'processed-video')
-            download = self.client.get('/video/lesson.mp4/?download=1')
-            self.assertTrue(download['Content-Disposition'].startswith('attachment'))
-            download.close()
+    def test_processing_failure_is_persisted(self):
+        with patch('subtitles.services.generate_subtitles', side_effect=ProcessingError('Файл пошкоджений.')):
+            response = self.client.post(reverse('process_video', args=[self.job.pk]), follow=True)
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, Job.Status.FAILED)
+        self.assertEqual(self.job.error, 'Файл пошкоджений.')
+        self.assertContains(response, 'Файл пошкоджений.')
 
-    def test_existing_srt_can_be_rendered_without_transcribing_again(self):
-        from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
-            videos, captions = Path(root) / 'videos', Path(root) / 'subtitles'
-            videos.mkdir()
-            captions.mkdir()
-            (videos / 'lesson.mp4').write_bytes(b'video')
-            (captions / 'lesson.mp4.srt').write_text('captions', encoding='utf-8')
-            def render(source, srt, destination):
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(b'processed-video')
-            with patch('subtitles.processing.generate_subtitles') as transcribe, patch('subtitles.processing.burn_subtitles', side_effect=render):
-                response = self.client.post('/process/lesson.mp4/', follow=True)
-            transcribe.assert_not_called()
-            self.assertContains(response, '<video')
-            self.assertContains(response, 'Завантажити відео')
-            self.assertContains(response, 'Завантажити SRT')
+    def test_running_job_does_not_start_twice(self):
+        Job.objects.filter(pk=self.job.pk).update(status=Job.Status.RUNNING)
+        with patch('subtitles.services.generate_subtitles') as generate:
+            self.client.post(reverse('process_video', args=[self.job.pk]))
+        generate.assert_not_called()
+
+    def test_unowned_legacy_files_are_not_exposed(self):
+        (Path(self.directory.name) / 'videos' / 'unowned.mp4').write_bytes(b'private')
+        self.assertNotContains(self.client.get('/'), 'unowned.mp4')
+        self.assertEqual(self.client.get('/video/unowned.mp4/').status_code, 404)
+
+    def test_csrf_is_required_for_upload_and_processing(self):
+        browser = Client(enforce_csrf_checks=True)
+        browser.force_login(self.user)
+        self.assertEqual(browser.post('/').status_code, 403)
+        self.assertEqual(browser.post(reverse('process_video', args=[self.job.pk])).status_code, 403)
+
+    def test_explicit_legacy_import_is_idempotent_and_keeps_owner(self):
+        from django.core.management import call_command
+        legacy = Path(self.directory.name) / 'videos' / 'old.mp4'
+        legacy.write_bytes(b'old-video')
+        captions = Path(self.directory.name) / 'subtitles'
+        captions.mkdir()
+        (captions / 'old.mp4.srt').write_text('captions', encoding='utf-8')
+        call_command('import_legacy_videos', owner='alice', verbosity=0)
+        call_command('import_legacy_videos', owner='bob', verbosity=0)
+        job = Job.objects.get(source='videos/old.mp4')
+        self.assertEqual(job.owner, self.user)
+        self.assertEqual(job.subtitles.name, 'subtitles/old.mp4.srt')
+        self.assertEqual(Job.objects.filter(source='videos/old.mp4').count(), 1)
+
+    def test_missing_result_file_returns_404(self):
+        Job.objects.filter(pk=self.job.pk).update(status=Job.Status.SUCCEEDED, result='rendered/gone.mp4', subtitles='subtitles/gone.srt')
+        self.assertEqual(self.client.get(reverse('video_result', args=[self.job.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse('download_subtitles', args=[self.job.pk])).status_code, 404)
+
+    def test_interrupted_job_can_be_recovered(self):
+        from django.core.management import call_command
+        Job.objects.filter(pk=self.job.pk).update(status=Job.Status.RUNNING)
+        call_command('recover_job', str(self.job.pk), verbosity=0)
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, Job.Status.FAILED)
+        self.assertEqual(self.job.owner, self.user)
+        self.assertContains(self.client.get(reverse('job_detail', args=[self.job.pk])), 'Створити відео із субтитрами')
+
+    def test_render_failure_keeps_srt_for_retry(self):
+        def generate(source, destination):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text('captions', encoding='utf-8')
+        def render(source, captions, destination):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b'mp4')
+        with patch('subtitles.services.generate_subtitles', side_effect=generate) as generate_mock, patch('subtitles.services.burn_subtitles', side_effect=ProcessingError('Кодування перервано.')), self.assertLogs('subtitles.services', level='ERROR'):
+            self.client.post(reverse('process_video', args=[self.job.pk]))
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, Job.Status.FAILED)
+        self.assertTrue(Path(self.job.subtitles.path).is_file())
+        with patch('subtitles.services.generate_subtitles') as second_generate, patch('subtitles.services.burn_subtitles', side_effect=render):
+            self.client.post(reverse('process_video', args=[self.job.pk]))
+        second_generate.assert_not_called()
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, Job.Status.SUCCEEDED)

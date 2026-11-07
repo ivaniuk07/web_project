@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Генератор субтитрів</title>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <h1><a href="{% url 'home' %}">Генератор субтитрів</a></h1>
+    {% if user.is_authenticated %}
+        <p>Користувач — {{ user.username }}</p>
+        <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button type="submit">Вийти</button>
+        </form>
+    {% endif %}
+    {% block content %}{% endblock %}
+</body>
+</html>

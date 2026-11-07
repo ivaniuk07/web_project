@@ -1,16 +1,20 @@
 from django import forms
 from django.conf import settings
-from django.core.validators import FileExtensionValidator
+from .validation import validate_upload
 
 
 class UploadForm(forms.Form):
     video = forms.FileField(
         label='Відеофайл',
-        validators=[FileExtensionValidator(['mp4', 'mov', 'mkv', 'webm', 'avi'])],
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        maximum = settings.MAX_UPLOAD_BYTES / (1024 * 1024)
+        formats = ', '.join(settings.ALLOWED_VIDEO_EXTENSIONS)
+        self.fields['video'].help_text = f'До {maximum:g} МБ, до {settings.MAX_VIDEO_SECONDS} с. Формати: {formats}.'
 
     def clean_video(self):
         video = self.cleaned_data['video']
-        if video.size > settings.MAX_UPLOAD_BYTES:
-            raise forms.ValidationError('Максимальний розмір файлу — 100 МБ.')
+        validate_upload(video)
         return video

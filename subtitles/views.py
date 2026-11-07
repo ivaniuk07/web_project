@@ -3,6 +3,8 @@ from pathlib import Path
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
+from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -31,8 +33,12 @@ def home(request):
         request.FILES if request.method == 'POST' else None,
     )
     if request.method == 'POST' and form.is_valid():
-        job = create_job(request.user, form.cleaned_data['video'])
-        return redirect('job_detail', job_id=job.pk)
+        try:
+            job = create_job(request.user, form.cleaned_data['video'])
+        except ValidationError as exc:
+            form.add_error('video', exc)
+        else:
+            return redirect('job_detail', job_id=job.pk)
     return render(request, 'subtitles/home.html', {
         'form': form,
         'jobs': Job.objects.filter(owner=request.user),
@@ -56,7 +62,11 @@ def job_detail(request, job_id):
 @login_required
 @require_POST
 def process_video(request, job_id):
-    process_job(_owned_job(request, job_id))
+    job = _owned_job(request, job_id)
+    try:
+        process_job(job)
+    except ValidationError as exc:
+        messages.error(request, ' '.join(exc.messages))
     return redirect('job_detail', job_id=job_id)
 
 

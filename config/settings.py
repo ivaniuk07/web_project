@@ -54,6 +54,13 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media')))
 MAX_UPLOAD_BYTES = int(os.environ.get('MAX_UPLOAD_BYTES', 100 * 1024 * 1024))
+ALLOWED_VIDEO_EXTENSIONS = [
+    value.strip().lower().lstrip('.')
+    for value in os.environ.get('ALLOWED_VIDEO_EXTENSIONS', 'mp4,mov,mkv,webm,avi').split(',')
+    if value.strip()
+]
+MAX_ACTIVE_JOBS_PER_USER = int(os.environ.get('MAX_ACTIVE_JOBS_PER_USER', 3))
+JOB_TIMEOUT_SECONDS = float(os.environ.get('JOB_TIMEOUT_SECONDS', 900))
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 MAX_VIDEO_SECONDS = int(os.environ.get('MAX_VIDEO_SECONDS', 600))

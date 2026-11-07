@@ -18,6 +18,9 @@ class JobViewTests(TestCase):
         self.media = override_settings(MEDIA_ROOT=self.directory.name)
         self.media.enable()
         self.addCleanup(self.media.disable)
+        inspect_patch = patch('subtitles.services.inspect_video', return_value=5)
+        inspect_patch.start()
+        self.addCleanup(inspect_patch.stop)
         self.user = get_user_model().objects.create_user('alice', password='test-password-142')
         self.other = get_user_model().objects.create_user('bob', password='test-password-242')
         self.client.force_login(self.user)
@@ -69,10 +72,10 @@ class JobViewTests(TestCase):
             self.assertIn('video', self.client.post('/', data).context['form'].errors)
 
     def test_processing_success_records_results_and_prevents_duplicate_work(self):
-        def generate(source, destination):
+        def generate(source, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('1\n00:00:00,000 --> 00:00:01,000\nHello\n', encoding='utf-8')
-        def render(source, captions, destination):
+        def render(source, captions, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b'mp4-result')
         with patch('subtitles.services.generate_subtitles', side_effect=generate) as transcribe, patch('subtitles.services.burn_subtitles', side_effect=render):
@@ -143,10 +146,10 @@ class JobViewTests(TestCase):
         self.assertContains(self.client.get(reverse('job_detail', args=[self.job.pk])), 'Створити відео із субтитрами')
 
     def test_render_failure_keeps_srt_for_retry(self):
-        def generate(source, destination):
+        def generate(source, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('captions', encoding='utf-8')
-        def render(source, captions, destination):
+        def render(source, captions, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b'mp4')
         with patch('subtitles.services.generate_subtitles', side_effect=generate) as generate_mock, patch('subtitles.services.burn_subtitles', side_effect=ProcessingError('Кодування перервано.')), self.assertLogs('subtitles.services', level='ERROR'):

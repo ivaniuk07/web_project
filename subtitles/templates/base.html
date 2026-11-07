@@ -15,6 +15,7 @@
             <button type="submit">Вийти</button>
         </form>
     {% endif %}
+    {% for message in messages %}<p role="alert">{{ message }}</p>{% endfor %}
     {% block content %}{% endblock %}
 </body>
 </html>

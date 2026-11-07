@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -14,6 +16,21 @@ from django.conf import settings
 
 class ProcessingError(Exception):
     """A message suitable for display on the upload page."""
+
+
+class ProcessingTimeout(ProcessingError):
+    pass
+
+
+class ProcessingBudget:
+    def __init__(self):
+        self.deadline = time.monotonic() + settings.JOB_TIMEOUT_SECONDS
+
+    def remaining(self, stage_limit):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProcessingTimeout('Перевищено максимальний час обробки завдання.')
+        return min(stage_limit, remaining)
 
 
 @dataclass(frozen=True)
@@ -28,11 +45,14 @@ class SpeechRecognizer(Protocol):
 
 
 class WhisperRecognizer:
+    def __init__(self, budget):
+        self.budget = budget
+
     def recognize(self, audio):
-        from faster_whisper import WhisperModel
-        model = WhisperModel(settings.WHISPER_MODEL, device='cpu', compute_type='int8')
-        segments, _ = model.transcribe(str(audio), beam_size=1)
-        return [Segment(item.start, item.end, item.text.strip()) for item in segments]
+        result = _run([
+            sys.executable, '-m', 'subtitles.speech', str(audio.resolve()), settings.WHISPER_MODEL,
+        ], self.budget.remaining(settings.TRANSCRIBE_TIMEOUT), cwd=settings.BASE_DIR)
+        return [Segment(**item) for item in json.loads(result.stdout)]
 
 
 def _run(command, timeout, **kwargs):
@@ -41,7 +61,7 @@ def _run(command, timeout, **kwargs):
     except FileNotFoundError as exc:
         raise ProcessingError('Для обробки встановіть FFmpeg і FFprobe.') from exc
     except subprocess.TimeoutExpired as exc:
-        raise ProcessingError('Перевищено час обробки. Спробуйте коротше відео.') from exc
+        raise ProcessingTimeout('Перевищено максимальний час обробки. Спробуйте коротше відео.') from exc
     except subprocess.CalledProcessError as exc:
         if 'No such filter' in (exc.stderr or ''):
             raise ProcessingError('Для вбудовування субтитрів потрібен FFmpeg із підтримкою libass.') from exc
@@ -50,15 +70,16 @@ def _run(command, timeout, **kwargs):
         raise ProcessingError('Не вдалося прочитати відео. Файл пошкоджений або формат не підтримується.') from exc
 
 
-def extract_audio(source: Path, destination: Path):
-    metadata = _run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', str(source)], settings.MEDIA_PROBE_TIMEOUT)
+def extract_audio(source: Path, destination: Path, budget=None):
+    budget = budget or ProcessingBudget()
+    metadata = _run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', str(source)], budget.remaining(settings.MEDIA_PROBE_TIMEOUT))
     try:
         streams = json.loads(metadata.stdout)['streams']
     except (ValueError, KeyError, TypeError) as exc:
         raise ProcessingError('Не вдалося прочитати структуру відео.') from exc
     if not any(stream.get('codec_type') == 'audio' for stream in streams):
         raise ProcessingError('У відео немає аудіодоріжки.')
-    _run([settings.FFMPEG_BINARY, '-nostdin', '-v', 'error', '-y', '-i', str(source), '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(destination)], settings.FFMPEG_TIMEOUT)
+    _run([settings.FFMPEG_BINARY, '-nostdin', '-v', 'error', '-y', '-i', str(source), '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(destination)], budget.remaining(settings.FFMPEG_TIMEOUT))
 
 
 def _timestamp(seconds):
@@ -82,14 +103,16 @@ def render_srt(segments: list[Segment]) -> str:
     return ''.join(blocks)
 
 
-def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecognizer | None = None):
+def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecognizer | None = None, budget=None):
     """A recognizer can be replaced without changing the conversion workflow."""
-    recognizer = recognizer or WhisperRecognizer()
+    budget = budget or ProcessingBudget()
+    recognizer = recognizer or WhisperRecognizer(budget)
     try:
         with tempfile.TemporaryDirectory(prefix='subtitle-audio-') as directory:
             audio = Path(directory) / 'audio.wav'
-            extract_audio(source, audio)
+            extract_audio(source, audio, budget=budget)
             content = render_srt(recognizer.recognize(audio))
+            budget.remaining(settings.JOB_TIMEOUT_SECONDS)
         destination.parent.mkdir(parents=True, exist_ok=True)
         # Publish only a complete file, even if multiple requests process one video.
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=destination.parent, delete=False) as output:
@@ -106,8 +129,9 @@ def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecogn
         raise ProcessingError('Помилка розпізнавання. Перевірте доступ до моделі Whisper та спробуйте ще раз.') from exc
 
 
-def burn_subtitles(source: Path, captions: Path, destination: Path):
+def burn_subtitles(source: Path, captions: Path, destination: Path, budget=None):
     """Render captions into an H.264 MP4 and publish only a complete result."""
+    budget = budget or ProcessingBudget()
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='render-', dir=destination.parent) as directory:
         workdir = Path(directory).resolve()
@@ -120,5 +144,6 @@ def burn_subtitles(source: Path, captions: Path, destination: Path):
             '-vf', 'subtitles=filename=captions.srt,pad=ceil(iw/2)*2:ceil(ih/2)*2',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-movflags', '+faststart', str(output),
-        ], settings.VIDEO_RENDER_TIMEOUT, cwd=workdir)
+        ], budget.remaining(settings.VIDEO_RENDER_TIMEOUT), cwd=workdir)
+        budget.remaining(settings.JOB_TIMEOUT_SECONDS)
         os.replace(output, destination)

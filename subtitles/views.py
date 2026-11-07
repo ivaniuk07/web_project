@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from .forms import UploadForm
 from .models import Job
-from .services import create_job, process_job
+from .services import create_job, enqueue_job, cancel_job as cancel_job_service
 
 
 @require_http_methods(['GET', 'POST'])
@@ -55,7 +55,8 @@ def job_detail(request, job_id):
     job = _owned_job(request, job_id)
     return render(request, 'subtitles/detail.html', {
         'job': job,
-        'can_process': job.status in [Job.Status.QUEUED, Job.Status.FAILED],
+        'can_process': job.status == Job.Status.FAILED or (job.status == Job.Status.QUEUED and not job.task_token),
+        'can_cancel': job.status in [Job.Status.QUEUED, Job.Status.RUNNING],
     })
 
 
@@ -64,9 +65,16 @@ def job_detail(request, job_id):
 def process_video(request, job_id):
     job = _owned_job(request, job_id)
     try:
-        process_job(job)
+        enqueue_job(job)
     except ValidationError as exc:
         messages.error(request, ' '.join(exc.messages))
+    return redirect('job_detail', job_id=job_id)
+
+
+@login_required
+@require_POST
+def cancel_job(request, job_id):
+    cancel_job_service(_owned_job(request, job_id))
     return redirect('job_detail', job_id=job_id)
 
 
@@ -74,6 +82,8 @@ def process_video(request, job_id):
 @require_GET
 def download_subtitles(request, job_id):
     job = _owned_job(request, job_id)
+    if job.status == Job.Status.CANCELLED:
+        raise Http404
     return _file_response(job.subtitles, True, f'{Path(job.original_name).stem}.srt', 'application/x-subrip')
 
 

@@ -25,6 +25,8 @@ class Job(models.Model):
     result = models.FileField(upload_to='rendered/', blank=True, max_length=512)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
     node_name = models.CharField(max_length=100, blank=True)
+    task_token = models.UUIDField(null=True, blank=True)
+    stage = models.CharField(max_length=100, default='Очікує запуску')
     error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

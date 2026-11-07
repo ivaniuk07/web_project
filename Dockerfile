@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 COPY --chown=app:app . .
-RUN mkdir -p /app/media && chown app:app /app/media
+RUN mkdir -p /app/media /home/app/.cache/huggingface && chown -R app:app /app/media /home/app/.cache
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*

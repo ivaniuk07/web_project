@@ -1,10 +1,11 @@
 {% extends 'base.html' %}
 {% block head %}
-{% if job.status == 'running' %}<meta http-equiv="refresh" content="5">{% endif %}
+{% if job.status == 'running' or job.status == 'queued' and job.task_token %}<meta http-equiv="refresh" content="3">{% endif %}
 {% endblock %}
 {% block content %}
 <h2>{{ job.original_name }}</h2>
 <p>Стан — {{ job.get_status_display }}</p>
+<p>Етап — {{ job.stage }}</p>
 <p>Створено {{ job.created_at|date:'d.m.Y H:i' }}</p>
 {% if job.node_name %}<p>Вузол — {{ job.node_name }}</p>{% endif %}
 {% if job.error %}<p role="alert">{{ job.error }}</p>{% endif %}
@@ -13,7 +14,13 @@
         {% csrf_token %}
         <button type="submit">Створити відео із субтитрами</button>
     </form>
-    <p>Обробка може тривати кілька хвилин. Дочекайтеся завершення запиту.</p>
+    <p>Завдання оброблятиметься у фоні. Сторінка оновлює стан автоматично.</p>
+{% endif %}
+{% if can_cancel %}
+    <form method="post" action="{% url 'cancel_job' job.pk %}">
+        {% csrf_token %}
+        <button type="submit">Скасувати завдання</button>
+    </form>
 {% endif %}
 {% if job.status == 'succeeded' and job.result %}
     <p>
@@ -24,6 +31,6 @@
     </p>
     <p><a href="{% url 'video_result' job.pk %}?download=1">Завантажити відео</a></p>
 {% endif %}
-{% if job.subtitles %}<p><a href="{% url 'download_subtitles' job.pk %}">Завантажити SRT</a></p>{% endif %}
+{% if job.subtitles and job.status != 'cancelled' %}<p><a href="{% url 'download_subtitles' job.pk %}">Завантажити SRT</a></p>{% endif %}
 <p><a href="{% url 'home' %}">Мої завдання</a></p>
 {% endblock %}

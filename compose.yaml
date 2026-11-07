@@ -7,8 +7,10 @@ x-app: &app
   environment: &app-environment
     POSTGRES_HOST: postgres
     MEDIA_ROOT: /app/media
+    CELERY_TASK_DEFAULT_QUEUE: subtitles
   volumes:
     - media:/app/media
+    - model-cache:/home/app/.cache/huggingface
 
 services:
   postgres:
@@ -27,6 +29,11 @@ services:
 
   redis1:
     image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis1-data:/data
     healthcheck:
       test: [CMD, redis-cli, ping]
       interval: 5s
@@ -43,6 +50,9 @@ services:
 
   web:
     <<: *app
+    environment:
+      <<: *app-environment
+      CELERY_BROKER_URL: redis://redis1:6379/0
     command: >-
       sh -c "python manage.py migrate --noinput &&
       python manage.py runserver 0.0.0.0:8000 --noreload"
@@ -85,3 +95,5 @@ services:
 volumes:
   postgres-data:
   media:
+  redis1-data:
+  model-cache:

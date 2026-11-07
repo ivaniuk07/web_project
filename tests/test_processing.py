@@ -54,3 +54,24 @@ class ProcessingTests(SimpleTestCase):
             with patch('subtitles.processing._run', side_effect=encode):
                 burn_subtitles(source, captions, output)
             self.assertEqual(output.read_bytes(), b'mp4')
+
+    def test_cancellation_kills_and_reaps_running_subprocess(self):
+        import subprocess
+        import sys
+        import time
+        from subtitles.processing import ProcessingCancelled, _run
+        started = time.monotonic()
+        processes = []
+        original = subprocess.Popen
+        def spawn(*args, **kwargs):
+            process = original(*args, **kwargs)
+            processes.append(process)
+            return process
+        def cancel():
+            if time.monotonic() - started > 0.1:
+                raise ProcessingCancelled('cancelled')
+        with patch('subtitles.processing.subprocess.Popen', side_effect=spawn):
+            with self.assertRaises(ProcessingCancelled):
+                _run([sys.executable, '-c', 'import time; time.sleep(5)'], 10, check_cancel=cancel)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIsNotNone(processes[0].poll())

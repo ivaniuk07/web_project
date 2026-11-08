@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -80,6 +81,16 @@ CELERY_TASK_DEFAULT_QUEUE = os.environ.get('CELERY_TASK_DEFAULT_QUEUE', 'subtitl
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_BROKER_CONNECTION_TIMEOUT = 2
 CELERY_BROKER_TRANSPORT_OPTIONS = {'socket_connect_timeout': 2, 'socket_timeout': 2, 'visibility_timeout': int(JOB_TIMEOUT_SECONDS) + 300}
+WORKER_NODE_NAME = os.environ.get('WORKER_NODE_NAME', 'node-1')
+WORKER_NODES = json.loads(os.environ.get('WORKER_NODES', json.dumps([
+    {'name': 'node-1', 'broker_url': 'redis://localhost:6379/0', 'queue': CELERY_TASK_DEFAULT_QUEUE},
+    {'name': 'node-2', 'broker_url': 'redis://localhost:6380/0', 'queue': CELERY_TASK_DEFAULT_QUEUE},
+])))
+NODE_TIMEOUT_SECONDS = float(os.environ.get('NODE_TIMEOUT_SECONDS', 20))
+NODE_RETRY_SECONDS = float(os.environ.get('NODE_RETRY_SECONDS', 10))
+DISPATCH_INTERVAL_SECONDS = float(os.environ.get('DISPATCH_INTERVAL_SECONDS', 2))
+DISPATCH_RESERVATION_SECONDS = float(os.environ.get('DISPATCH_RESERVATION_SECONDS', 15))
+MAX_DISPATCH_ATTEMPTS = int(os.environ.get('MAX_DISPATCH_ATTEMPTS', 5))
 
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'

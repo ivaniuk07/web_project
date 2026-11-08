@@ -9,6 +9,19 @@ def video_upload_path(job, filename):
     return f'videos/{job.pk}{Path(filename).suffix.lower()}'
 
 
+class WorkerNode(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    broker_url = models.CharField(max_length=512)
+    queue = models.CharField(max_length=100, default='subtitles')
+    enabled = models.BooleanField(default=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    unavailable_until = models.DateTimeField(null=True, blank=True)
+    last_assigned_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.name
+
+
 class Job(models.Model):
     class Status(models.TextChoices):
         QUEUED = 'queued', 'Очікує обробки'
@@ -27,6 +40,10 @@ class Job(models.Model):
     node_name = models.CharField(max_length=100, blank=True)
     task_token = models.UUIDField(null=True, blank=True)
     stage = models.CharField(max_length=100, default='Очікує запуску')
+    node = models.ForeignKey(WorkerNode, null=True, blank=True, on_delete=models.SET_NULL)
+    dispatch_attempts = models.PositiveIntegerField(default=0)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
     error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

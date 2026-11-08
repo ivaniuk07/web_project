@@ -7,12 +7,14 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from subtitles.models import Job
+from subtitles.models import Job, WorkerNode
 from subtitles.processing import ProcessingError
 
 
 class JobViewTests(TestCase):
     def setUp(self):
+        from django.utils import timezone
+        WorkerNode.objects.create(name='node-1', broker_url='redis://localhost:6379/0', queue='subtitles-local', heartbeat_at=timezone.now())
         publish_patch = patch('subtitles.tasks.process_video_task.apply_async')
         publish_patch.start()
         self.addCleanup(publish_patch.stop)

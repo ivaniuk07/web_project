@@ -6,12 +6,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from subtitles.models import Job
+from subtitles.models import Job, WorkerNode
 from subtitles.services import enqueue_job, cancel_job, process_job
 
 
 class AsyncJobTests(TestCase):
     def setUp(self):
+        from django.utils import timezone
+        WorkerNode.objects.create(name='node-1', broker_url='redis://localhost:6379/0', queue='subtitles-local', heartbeat_at=timezone.now())
         self.root = tempfile.TemporaryDirectory()
         self.addCleanup(self.root.cleanup)
         self.override = override_settings(MEDIA_ROOT=self.root.name)
@@ -37,8 +39,8 @@ class AsyncJobTests(TestCase):
     def test_broker_failure_is_retryable(self, publish):
         response = self.client.post(reverse('process_video', args=[self.job.pk]), follow=True)
         self.job.refresh_from_db()
-        self.assertEqual(self.job.status, Job.Status.FAILED)
-        self.assertContains(response, 'черг')
+        self.assertEqual(self.job.status, Job.Status.QUEUED)
+        self.assertContains(response, 'повторної спроби')
 
     @patch('subtitles.tasks.process_video_task.apply_async')
     def test_cancelled_queued_message_does_not_execute(self, publish):

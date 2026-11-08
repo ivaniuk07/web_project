@@ -8,6 +8,7 @@ x-app: &app
     POSTGRES_HOST: postgres
     MEDIA_ROOT: /app/media
     CELERY_TASK_DEFAULT_QUEUE: subtitles
+    WORKER_NODES: '${WORKER_NODES:-[{"name":"node-1","broker_url":"redis://redis1:6379/0","queue":"subtitles"},{"name":"node-2","broker_url":"redis://redis2:6379/0","queue":"subtitles"}]}'
   volumes:
     - media:/app/media
     - model-cache:/home/app/.cache/huggingface
@@ -42,6 +43,11 @@ services:
 
   redis2:
     image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    ports:
+      - '127.0.0.1:6380:6379'
+    volumes:
+      - redis2-data:/data
     healthcheck:
       test: [CMD, redis-cli, ping]
       interval: 5s
@@ -74,6 +80,7 @@ services:
     environment:
       <<: *app-environment
       CELERY_BROKER_URL: redis://redis1:6379/0
+      WORKER_NODE_NAME: node-1
     depends_on:
       web:
         condition: service_healthy
@@ -86,14 +93,23 @@ services:
     environment:
       <<: *app-environment
       CELERY_BROKER_URL: redis://redis2:6379/0
+      WORKER_NODE_NAME: node-2
     depends_on:
       web:
         condition: service_healthy
       redis2:
         condition: service_healthy
 
+  dispatcher:
+    <<: *app
+    command: [python, manage.py, dispatch_jobs]
+    depends_on:
+      web:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   media:
   redis1-data:
+  redis2-data:
   model-cache:

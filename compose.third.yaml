@@ -1,0 +1,38 @@
+# Set WORKER_NODES to all three nodes in .env before applying this overlay.
+services:
+  redis3:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    ports:
+      - '127.0.0.1:6381:6379'
+    volumes:
+      - redis3-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker3:
+    build: .
+    image: subtitle-studio:local
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      MEDIA_ROOT: /app/media
+      CELERY_TASK_DEFAULT_QUEUE: subtitles
+      CELERY_BROKER_URL: redis://redis3:6379/0
+      WORKER_NODE_NAME: node-3
+      WORKER_NODES: '${WORKER_NODES:?Set WORKER_NODES with all three nodes}'
+    volumes:
+      - media:/app/media
+      - model-cache:/home/app/.cache/huggingface
+    command: [celery, -A, config, worker, -l, info, --concurrency=1, --prefetch-multiplier=1]
+    depends_on:
+      web:
+        condition: service_healthy
+      redis3:
+        condition: service_healthy
+
+volumes:
+  redis3-data:

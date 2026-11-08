@@ -1,0 +1,44 @@
+# Host B: same project code, its own Redis and one compute worker.
+name: subtitles-remote-worker
+services:
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes', --requirepass, '${REDIS_PASSWORD:?Set REDIS_PASSWORD}']
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host B private IP}:6379:6379'
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build: .
+    image: subtitle-studio:local
+    env_file: .env.worker
+    environment:
+      MEDIA_ROOT: /app/media
+      POSTGRES_HOST: ${POSTGRES_HOST:?Set host A private IP}
+      CELERY_BROKER_URL: ${LOCAL_BROKER_URL:?Set own internal broker URL}
+      CELERY_TASK_DEFAULT_QUEUE: subtitles
+      WORKER_NODE_NAME: ${WORKER_NODE_NAME:?Set unique node name}
+      WORKER_NODES: '${WORKER_NODES:?Set the same node registry as host A}'
+    volumes:
+      - type: bind
+        source: ${SHARED_MEDIA_PATH:?Mount shared media first}
+        target: /app/media
+        bind:
+          create_host_path: false
+      - model-cache:/home/app/.cache/huggingface
+    command: [sh, -c, 'python manage.py check_deployment --read-marker coordinator && exec celery -A config worker -l info --concurrency=1 --prefetch-multiplier=1 --hostname=node-2@%h']
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  model-cache:

@@ -1,0 +1,88 @@
+# Host A: Django, PostgreSQL, dispatcher and the first worker/broker.
+name: subtitles-coordinator
+x-app: &app
+  build: .
+  image: subtitle-studio:local
+  env_file: .env.coordinator
+  environment: &environment
+    MEDIA_ROOT: /app/media
+    POSTGRES_HOST: postgres
+    CELERY_BROKER_URL: '${LOCAL_BROKER_URL:?Set LOCAL_BROKER_URL}'
+    CELERY_TASK_DEFAULT_QUEUE: subtitles
+    WORKER_NODE_NAME: node-1
+    WORKER_NODES: '${WORKER_NODES:?Set both externally reachable broker URLs}'
+  volumes:
+    - type: bind
+      source: ${SHARED_MEDIA_PATH:?Set shared media path}
+      target: /app/media
+      bind:
+        create_host_path: false
+    - model-cache:/home/app/.cache/huggingface
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host A private IP}:5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes', --requirepass, '${REDIS_PASSWORD:?Set REDIS_PASSWORD}']
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host A private IP}:6379:6379'
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    <<: *app
+    command: [sh, -c, 'python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000 --noreload']
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host A private IP}:8000:8000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/accounts/login/', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+
+  dispatcher:
+    <<: *app
+    command: [python, manage.py, dispatch_jobs]
+    depends_on:
+      web:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: [celery, -A, config, worker, -l, info, --concurrency=1, --prefetch-multiplier=1, --hostname=node-1@%h]
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  model-cache:

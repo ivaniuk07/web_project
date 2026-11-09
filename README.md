@@ -1,237 +1,200 @@
 # Генератор субтитрів
 
-Проста HTML-сторінка дозволяє завантажити відео, створити субтитри та завантажити SRT. Відео зберігаються в `media/videos/`, результати — у `media/subtitles/`. Перевіряються розширення, розмір до 100 МБ і наявність аудіодоріжки під час обробки.
+Навчальний Django-сервіс приймає відео, у фоні розпізнає мовлення через Whisper
+і повертає MP4 із вбудованими субтитрами та окремий SRT. Користувач має власну
+історію, бачить етапи обробки та може скасувати задачу. Прості HTML-сторінки без
+окремої фронтенд-збірки. Потрібна аудіодоріжка з мовленням.
 
-## Запуск
+Схема: Django → балансувальник обчислень → маршрутизатор черг → окремий Redis
+кожного вузла → Celery + Whisper + FFmpeg. PostgreSQL і файлове сховище спільні.
+Два воркери можна запустити на одному комп'ютері або на різних VM.
+Детальна вихідна схема: `Architecture/architecture-two-redis.png`.
 
-Потрібен Python 3.11 або новіший і запущений PostgreSQL.
-За замовчуванням Django підключається до бази `web_project` на `127.0.0.1:5432`
-від імені користувача операційної системи. Параметри можна перевизначити змінними
-`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`.
+## Швидкий запуск на одному комп'ютері
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-createdb -h 127.0.0.1 web_project
-python manage.py migrate
-python manage.py runserver
-```
+Потрібні Docker Engine/Desktop і Docker Compose v2. Для першого запуску потрібен
+інтернет для образів та моделі Whisper tiny. Рекомендовано 4 ГБ вільної RAM
+для двох воркерів; реальне споживання залежить від відео та моделі.
 
-Відкрити http://127.0.0.1:8000/.
-
-```bash
-python manage.py check
-python manage.py test
-```
-
-## Наступні версії
-
-1. Підготовка сценарію демонстрації на двох VM.
-2. Перевірки відмовостійкості та сценарій захисту.
-
-Цільова архітектура зображена в `Architecture/architecture-two-redis.png`. Шаблон відповідає за HTML, форма — за перевірку вводу, view — за прийом запиту та збереження файлу. Складніші компоненти додаватимуться разом із відповідними функціями.
-
-## Етап 7 — окремі комп’ютери або VM
-
-Додано `compose.coordinator.yaml` для Django, PostgreSQL, dispatcher та першого
-вузла і `compose.worker.yaml` для другого вузла з власним Redis. Медіа спільні через NFS.
-Порядок запуску й налаштування описані в [інструкції](deploy/MULTI_HOST.md).
-[Докази перевірки](deploy/STAGE7_EVIDENCE.md) містять реальні UUID задач,
-журнали двох VM, контрольні суми файлів і результат відключення та повернення вузла.
-
-## Етапи 1 і 2
-
-FFmpeg та FFprobe мають бути доступні в PATH. Для готового MP4 потрібна збірка FFmpeg із libass, її встановлення описано нижче. Для розпізнавання використовується Whisper tiny на CPU. Перший запуск завантажує модель з інтернету.
-
-На сторінці після завантаження відео натисніть «Створити відео із субтитрами», стежте за етапами фонової обробки та завантажте готові MP4 або SRT. FFmpeg готує аудіо, Whisper розпізнає мовлення, окрема функція формує часові позначки SRT, а FFmpeg вбудовує текст у MP4.
-
-Обробити файл із термінала також можна так:
-
-```bash
-python manage.py transcribe_video video.mp4 --output media/subtitles/video.srt
-```
-
-### Docker Compose
-
-```bash
+```sh
 cp .env.example .env
 docker compose up --build -d
 ```
 
-Docker-версія відкривається на http://127.0.0.1:8001/. У ній є Django, PostgreSQL, два Redis і два підготовлені Celery-воркери. Обидва воркери обробляють задачі через власні Redis, а диспетчер розподіляє навантаження.
+Відкрийте [сайт](http://127.0.0.1:8001/), зареєструйтеся, завантажте ролик і
+натисніть «Створити відео із субтитрами». Після завершення відкриється плеєр,
+нижче — завантаження MP4 і SRT. Сторінка автоматично оновлюється під час роботи.
 
-У Docker PostgreSQL використовує окрему базу `subtitles`, а локальний запуск — `web_project`. Параметри Docker записані в `.env`. Дані PostgreSQL та відео/SRT зберігаються в постійних томах `postgres-data` і `media`. Том медіа монтується до Django й обох воркерів. Локальний запуск зберігає файли у своїй папці `media`.
-
-```bash
+```sh
 docker compose ps
-docker compose logs worker1 worker2
+docker compose logs worker1 worker2 dispatcher
 docker compose exec web python manage.py test
 docker compose stop
 docker compose start
 ```
 
-Для тесту з відео на хості:
+У Docker використовуються база `subtitles`, черга `subtitles` і named volumes
+postgres-data/media/model-cache/redis*-data. `stop` зберігає їх. `down -v`
+видаляє дані томів, тому для звичайної зупинки його не використовуйте.
 
-```bash
-docker compose cp video.mp4 web:/app/media/video.mp4
-docker compose exec web python manage.py transcribe_video /app/media/video.mp4 --output /app/media/subtitles/video.srt
+Для операторської сторінки створіть адміністратора:
+
+```sh
+docker compose exec web python manage.py createsuperuser
 ```
 
-Для пояснення SOLID: форма перевіряє введення, view керує HTTP, `extract_audio` працює з FFmpeg, `WhisperRecognizer` займається мовленням, `render_srt` форматує результат. `generate_subtitles` приймає інтерфейс `SpeechRecognizer`, тому інший механізм розпізнавання можна підставити без зміни процесу конвертації.
+Увійдіть ним та відкрийте `/operations/` або посилання «Стан системи».
+Сторінка доступна активним користувачам із `is_staff=True`. Для видачі staff
+вже наявному обліковому запису використайте операторську Django shell:
 
-## Відео із субтитрами
-
-Кнопка «Створити відео із субтитрами» створює MP4 із текстом у кадрі. Готовий ролик можна переглянути у плеєрі й завантажити. Під ним доступний окремий SRT. MP4 зберігається в `media/rendered/`, SRT — у `media/subtitles/`. Для відео з уже готовим SRT натисніть кнопку обробки ще раз, щоб створити MP4.
-
-Для накладання тексту потрібен FFmpeg із фільтром `subtitles` та libass. Docker-образ містить відповідний FFmpeg і шрифт DejaVu. На Apple Silicon macOS можна встановити повну збірку й указати її перед запуском:
-
-```bash
-brew install ffmpeg-full
-export FFMPEG_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
-python manage.py runserver
+```sh
+docker compose exec web python manage.py shell
 ```
 
-Для іншого розташування FFmpeg змініть `FFMPEG_BINARY`. Максимальний час кодування MP4 налаштовується через `VIDEO_RENDER_TIMEOUT` (типово 600 секунд). Кодування виконується у фоновому Celery-воркері.
-
-## Версія 0.2 — користувачі та історія
-
-Зареєструйтеся на `/accounts/register/`, потім завантажте відео. Кожне завантаження створює задачу з власником у PostgreSQL. На головній сторінці показана особиста історія, а на сторінці задачі — стан, помилка обробки та готові MP4/SRT. Перегляд, обробка й скачування перевіряють власника задачі. Повторний запит для вже завершеної або активної задачі повертає її поточний стан.
-
-Після оновлення застосуйте міграції:
-
-```bash
-python manage.py migrate
+```python
+from django.contrib.auth import get_user_model
+get_user_model().objects.filter(username='YOUR_USERNAME').update(is_staff=True)
 ```
 
-Модель `Job` містить `owner`, `source`, `subtitles`, `result`, `status`, `error`, `created_at`, `updated_at`. Поле `node_name` підготовлене для наступного етапу балансування. Стан `cancelled` підготовлений для майбутньої функції скасування. HTTP-обробники відповідають за авторизацію й відповідь, `services.py` — за створення та переходи станів, `processing.py` — за FFmpeg/Whisper.
+Це операторська дія в терміналі, не публічний API. Staff бачить зведення всіх
+активних задач, але звичайні endpoints перегляду/завантаження зберігають перевірку власника.
 
-### Відео першої версії
+## Дві окремі VM
 
-Файли старої версії зберігаються у спільному сховищі. Щоб додати їх до особистої історії, зареєструйте обліковий запис і явно призначте йому попередні файли:
+Інструкції та конфігурації:
 
-```bash
-python manage.py import_legacy_videos --owner YOUR_USERNAME
-```
+- [Мережа, PostgreSQL, власні Redis та NFS](deploy/MULTI_HOST.md).
+- [HTTPS і локальний CA](deploy/HTTPS.md).
+- [Дослід обмеженого автозапуску node-3](deploy/AUTOSCALING.md).
+- [Сценарій захисту](deploy/DEFENSE.md).
+- [Фактична перевірка двох VM](deploy/STAGE7_EVIDENCE.md).
+- [Репетиція та додаткові функції](deploy/STAGE8_EVIDENCE.md).
 
-Команда призначає цьому користувачу всі файли без власника в поточному `MEDIA_ROOT/videos`, підхоплює існуючі SRT/MP4, а повторний запуск зберігає попередніх власників. Виконуйте її для облікового запису, якому належать файли попередньої версії. У Docker використовуйте `docker compose exec web python manage.py import_legacy_videos --owner YOUR_USERNAME`.
+Перевірена топологія: Ubuntu ARM64, 10.211.55.3 — Django, dispatcher, PostgreSQL,
+Redis 1, node-1 та NFS; Kali ARM64, 10.211.55.5 — Redis 2 і node-2.
+На обох хостах однаковий код і `/srv/subtitles/media`, у контейнерах `/app/media`.
+Файли не передаються в повідомленнях Redis: воркер отримує UUID, шлях і токен спроби.
+З HTTPS сайт доступний за `https://10.211.55.3:8443/` після налаштування довіри
+до локального CA. IP залежать від вашої мережі. Це окрема БД від локального запуску.
 
-### Відновлення після перерваного запиту
+На A скопіюйте `deploy/coordinator.env.example` у `.env.coordinator`, на B —
+`deploy/worker.env.example` у `.env.worker`. Замініть документаційні IP та всі
+`REPLACE_...`, задайте однакові дані PostgreSQL і WORKER_NODES. Права env-файлів — 600.
+Реальні env-файли виключені з Git і Docker build context.
 
-Якщо запуск було перервано або задача застрягла в черзі, спочатку зупиніть Celery-воркери та Django, які могли передавати чи обробляти цю задачу. Потім переведіть перервану задачу в стан помилки для повторного запуску:
+При HTTPS завжди використовуйте той самий набір Compose-файлів з
+`-f compose.https.yaml`, включно з наступними `up` і командами автозапуску.
+Overlay прибирає зовнішній HTTP-порт Django. Без нього базова конфігурація A
+залишається HTTP-демонстрацією на порту 8000. Докладний порядок є в інструкціях.
 
-```bash
-python manage.py recover_job JOB_UUID
-```
+## Локальна розробка без контейнера Django
 
-Після запуску сервера власник зможе повторити обробку зі сторінки задачі. Команда застосовується до задач зі станом `running` або `queued` з ідентифікатором запуску; вона скидає цей ідентифікатор, тому запізніле повідомлення з Redis буде проігноровано. Ідентифікатор задачі видно в адресі її сторінки.
+Потрібні Python 3.11+ (у Docker 3.12), PostgreSQL, два Redis і FFmpeg/FFprobe із
+фільтром `subtitles`/libass. `requirements.txt` перелічує Python-залежності,
+які `pip` встановлює однією командою. `.env` автоматично читає Compose,
+а звичайний Python-процес використовує експортовані змінні середовища.
 
-## Пункт 4 — обмеження навантаження
-
-Усі ліміти задаються змінними середовища:
-
-| Змінна | Типове значення | Призначення |
-| --- | --- | --- |
-| MAX_UPLOAD_BYTES | 104857600 | Максимальний розмір відео, 100 МБ |
-| MAX_VIDEO_SECONDS | 600 | Максимальна тривалість, 10 хвилин |
-| ALLOWED_VIDEO_EXTENSIONS | mp4,mov,mkv,webm,avi | Дозволені розширення |
-| MAX_ACTIVE_JOBS_PER_USER | 3 | Кількість задач у станах queued/running на користувача |
-| JOB_TIMEOUT_SECONDS | 900 | Загальний час однієї обробки, 15 хвилин |
-| TRANSCRIBE_TIMEOUT | 600 | Окрема верхня межа для Whisper |
-| VIDEO_RENDER_TIMEOUT | 600 | Окрема верхня межа для кодування MP4 |
-
-Після зміни змінних перезапустіть Django. У Docker відредагуйте `.env` і виконайте `docker compose up -d`. Локально експортуйте змінні перед запуском сервера.
-
-Сервер перевіряє файл через FFprobe перед створенням задачі. Файл має містити відео й аудіо з визначеною тривалістю. Відхилений файл видаляється зі сховища. Ліміт активних задач перевіряється під блокуванням користувача в PostgreSQL, включно з одночасними завантаженнями та повторним запуском невдалої задачі.
-
-Перед обробкою перевірки повторюються для старих або імпортованих відео. Загальний бюджет часу охоплює перевірку джерела, підготовку аудіо, Whisper і кодування MP4. Whisper запускається окремим процесом, який примусово завершується й очікується при перевищенні ліміту. FFmpeg та FFprobe також мають обмежений час. При тайм-ауті задача переходить у стан помилки з повідомленням. Уже готовий SRT зберігається для повторної спроби.
-
-## Етап 5 — Celery, стани та скасування
-
-Кнопка запуску передає ідентифікатор задачі, шлях у спільному сховищі та ідентифікатор запуску до окремої черги першого Redis. HTTP-запит одразу повертає сторінку задачі. Celery-воркер читає файли зі сховища й записує стани до PostgreSQL. Сторінка оновлюється кожні 3 секунди під час очікування й виконання.
-
-Етапи обробки — перевірка відео, підготовка аудіо, розпізнавання мовлення, формування SRT, вбудовування субтитрів, готово. Скасувати можна задачу до запуску й під час виконання. Перевірки скасування між етапами та кожні 0.2 секунди під час роботи підпроцесу зупиняють FFmpeg/Whisper. Зміна стану й ідентифікатора запуску забороняє публікацію запізнілого результату. Скасована задача залишається в історії.
-
-### Локальний запуск
-
-Docker Compose публікує Redis 1 лише на `127.0.0.1:6379`. Локальні Django та воркер використовують чергу `subtitles-local`, а Docker-сервіси — `subtitles`. Це дозволяє їм працювати з окремими базами та папками медіа через один Redis.
-
-```bash
-docker compose up -d redis1
-python manage.py migrate
-export FFMPEG_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
-python manage.py runserver
-```
-
-В іншому терміналі активуйте те саме віртуальне середовище та запустіть воркер:
-
-```bash
+```sh
+python3 -m venv .venv
 source .venv/bin/activate
-export FFMPEG_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
-celery -A config worker -l info -Q subtitles-local --pool=threads --concurrency=1 --prefetch-multiplier=1
-```
-
-Параметри Redis і черги змінюються через `CELERY_BROKER_URL` і `CELERY_TASK_DEFAULT_QUEUE`. Для іншої операційної системи вкажіть свій шлях до FFmpeg.
-
-### Запуск у Docker
-
-```bash
-docker compose up --build -d
-```
-
-У Docker балансувальник обирає між двома воркерами, а маршрутизатор передає задачу у відповідний Redis. Дані Redis 1 та кеш моделей Whisper зберігаються в постійних томах. Недоступна черга переводить задачу в помилку з можливістю повторного запуску. Повторні повідомлення перевіряються за станом та ідентифікатором запуску.
-
-## Етап 6 — балансування вузлів
-
-`WorkerNode` зберігає адресу Redis, чергу, доступність і час останнього heartbeat. Воркери оновлюють heartbeat у PostgreSQL, тому кожен може мати окремий Redis. Імена вузлів задаються через `WORKER_NODE_NAME`.
-
-`LeastLoadedBalancer` обирає доступний вузол із найменшою кількістю призначених queued/running задач. За однакового навантаження наступним обирається вузол, якому найдовше не призначали роботу. `RedisQueueRouter` окремо передає задачу в Redis вибраного вузла. У PostgreSQL залишаються вузол, ідентифікатор запуску, кількість спроб та час передачі.
-
-Окремий процес `python manage.py dispatch_jobs` повторює передачу pending-задач. Якщо вузол недоступний, задача очікує й автоматично призначається після появи доступного вузла. Втрата heartbeat повертає його задачі на розподіл. Ідентифікатор запуску змінюється, тому старі повідомлення й результати не змінять новий запуск. Після зупинки дочірнього процесу на живому воркері задачу також буде перепризначено після загального тайм-ауту з запасом 60 секунд.
-
-Успішно опубліковані задачі залишаються в черзі доступного вузла. Перервана передача без підтвердження публікації повторюється після `DISPATCH_RESERVATION_SECONDS`. Невдалий Redis тимчасово виключається на `NODE_RETRY_SECONDS`. Кількість спроб обмежена `MAX_DISPATCH_ATTEMPTS`; після вичерпання задача отримує помилку й доступна для ручного повторного запуску. Скасування має пріоритет над перепризначенням.
-
-### Два вузли в Docker
-
-```bash
-docker compose up --build -d
-```
-
-Compose запускає диспетчер і два воркери з окремими Redis. Вузол, обраний для задачі, показаний на її сторінці. PostgreSQL, медіа й моделі спільні.
-
-### Локальні воркери на macOS
-
-Локальний реєстр типово містить `node-1` з Redis `127.0.0.1:6379` і `node-2` з Redis `127.0.0.1:6380`, обидва з чергою `subtitles-local`. В окремих терміналах з активним `.venv` та налаштованим `FFMPEG_BINARY` запустіть:
-
-```bash
+python -m pip install -r requirements.txt
+createdb -h 127.0.0.1 web_project
 python manage.py migrate
+docker compose up -d redis1 redis2
+python manage.py runserver
+```
+
+За замовчуванням PostgreSQL `web_project`, користувач ОС, localhost:5432.
+Для іншої конфігурації експортуйте POSTGRES_* перед командами. Локальний сайт
+[127.0.0.1:8000](http://127.0.0.1:8000/) використовує `media/` і чергу
+`subtitles-local`, відокремлену від Docker. В інших терміналах з активним `.venv`:
+
+```sh
 python manage.py dispatch_jobs
 ```
 
-```bash
+```sh
 WORKER_NODE_NAME=node-1 CELERY_BROKER_URL=redis://localhost:6379/0 celery -A config worker -l info -Q subtitles-local --pool=threads --concurrency=1 --hostname=local-node1@%h
 ```
 
-```bash
+```sh
 WORKER_NODE_NAME=node-2 CELERY_BROKER_URL=redis://localhost:6380/0 celery -A config worker -l info -Q subtitles-local --pool=threads --concurrency=1 --hostname=local-node2@%h
 ```
 
-Django запускається звичайною командою `python manage.py runserver`. Локальні та Docker-черги різні, оскільки вони обслуговують різні бази й папки медіа.
+На macOS можна встановити повну збірку `brew install ffmpeg-full` і експортувати
+`FFMPEG_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg` у кожному терміналі.
+У цих ARM64 Parallels VM перевірено `OPENBLAS_CORETYPE=ARMV8` для усунення
+SIGILL під час імпорту NumPy. Залежить від конкретного віртуального CPU.
 
-### Додавання третього вузла
-
-У `.env` задайте повний JSON-список усіх вузлів:
-
-```dotenv
-WORKER_NODES=[{"name":"node-1","broker_url":"redis://redis1:6379/0","queue":"subtitles"},{"name":"node-2","broker_url":"redis://redis2:6379/0","queue":"subtitles"},{"name":"node-3","broker_url":"redis://redis3:6379/0","queue":"subtitles"}]
+```sh
+python manage.py check
+python manage.py test
+python manage.py makemigrations --check --dry-run
 ```
 
-Запустіть додатковий Redis і воркер із готового Compose-накладення:
+## Налаштування
 
-```bash
-docker compose -f compose.yaml -f compose.third.yaml up --build -d
-```
+Повний приклад для Compose — `.env.example`, для VM — `deploy/*.env.example`.
 
-Цей список має бути однаковим у Django, диспетчера та всіх воркерів. Для інших хостів укажіть доступні їм мережеві адреси Redis. Логіка вибору працює з довільною кількістю записів списку. Видалені з конфігурації вузли виключаються з вибору, а їхня історія залишається в PostgreSQL.
+| Змінна | Типово | Призначення |
+| --- | --- | --- |
+| DJANGO_SECRET_KEY | локальний fallback | Задайте випадковий секрет для демонстраційного сервера |
+| DJANGO_DEBUG | true | Вимкніть на VM |
+| DJANGO_ALLOWED_HOSTS | localhost,127.0.0.1 | Дозволені host/IP без порту |
+| POSTGRES_DB / USER / PASSWORD / HOST / PORT | web_project / користувач ОС / порожній / 127.0.0.1 / 5432 | База станів |
+| MEDIA_ROOT | media/ | Спільні джерела, SRT і MP4 |
+| WHISPER_MODEL | tiny | Назва моделі або локальна папка моделі |
+| FFMPEG_BINARY | ffmpeg | Шлях до FFmpeg із libass; ffprobe потрібний у PATH |
+| MAX_UPLOAD_BYTES | 104857600 | 100 МіБ |
+| MAX_VIDEO_SECONDS | 600 | Максимум 10 хвилин |
+| ALLOWED_VIDEO_EXTENSIONS | mp4,mov,mkv,webm,avi | Перелік розширень |
+| MAX_ACTIVE_JOBS_PER_USER | 3 | queued/running, включно з ще не запущеними upload |
+| JOB_TIMEOUT_SECONDS | 900 | Загальний бюджет спроби |
+| MEDIA_PROBE_TIMEOUT / FFMPEG_TIMEOUT | 20 / 120 | Ліміти перевірки/підготовки аудіо |
+| TRANSCRIBE_TIMEOUT / VIDEO_RENDER_TIMEOUT | 600 / 600 | Whisper / рендер |
+| CELERY_BROKER_URL | redis://localhost:6379/0 | Власний Redis воркера |
+| CELERY_TASK_DEFAULT_QUEUE | subtitles-local | Черга цього розгортання |
+| WORKER_NODE_NAME | node-1 | Унікальна назва вузла |
+| WORKER_NODES | два локальні вузли | JSON name/broker_url/queue/enabled |
+| NODE_TIMEOUT_SECONDS / NODE_RETRY_SECONDS | 20 / 10 | Втрата heartbeat / cooldown Redis |
+| DISPATCH_INTERVAL_SECONDS / DISPATCH_RESERVATION_SECONDS | 2 / 15 | Цикл dispatcher / повтор незавершеної публікації |
+| MAX_DISPATCH_ATTEMPTS | 5 | Межа спроб передачі |
+| ETA_FALLBACK_SECONDS | 60 | Приблизна тривалість без історичних вимірювань |
+| DJANGO_SECURE_COOKIES / DJANGO_TRUST_PROXY / DJANGO_SECURE_SSL_REDIRECT | false | Вмикає HTTPS-overlay |
+| DJANGO_CSRF_TRUSTED_ORIGINS | порожній | Точні scheme/host/port |
+| HTTPS_HOST / HTTPS_PORT | із env / 8443 | Приватний TLS endpoint |
+| EXTRA_REDIS_PASSWORD | лише явне значення | Пароль Redis резервного node-3 на VM A |
 
-Параметри доступності й повторних спроб наведені в `.env.example`. Зупинити воркер для демонстрації можна через `docker compose stop worker1`. Після закінчення `NODE_TIMEOUT_SECONDS` нові задачі підуть до доступних вузлів. `python manage.py dispatch_jobs --once` виконує один цикл відновлення й призначення.
+## Пояснення архітектури й SOLID
+
+| Компонент | Відповідальність |
+| --- | --- |
+| Django views/forms | Авторизація, HTTP, перевірка введення та приватні файли |
+| services.py | Життєвий цикл задачі й захист переходів токеном |
+| LeastLoadedBalancer | Вибір доступного вузла за queued/running і чергування при рівності |
+| RedisQueueRouter | Публікація в Redis обраного вузла |
+| dispatch_jobs | Повтор спроб, відновлення після втрати вузла |
+| Redis | Окрема черга повідомлень кожного вузла |
+| Celery | Виконання фонових задач і heartbeat |
+| Whisper / FFmpeg | Розпізнавання / аудіо та текст у кадрі |
+| PostgreSQL | Користувачі, задачі, вузли, навантаження, токени та час |
+| NFS / media volume | Єдині файли для Django та всіх воркерів |
+| monitoring.py | Оцінка очікування та зведення навантаження |
+| Caddy | TLS перед Django |
+
+SRP: HTTP, вибір вузла, публікація та обробка файлів розділені. OCP: додавання
+вузла через WORKER_NODES не змінює алгоритм вибору. LSP: реалізації
+SpeechRecognizer/TaskRouter дотримуються контрактів сегментів/публікації.
+ISP: ці Protocol містять лише потрібні recognize/publish. DIP: обробка й
+Dispatcher приймають ці вузькі залежності, що дозволяє підставляти інші реалізації.
+
+Прогноз очікування приблизний: використовує до 50 успішних вимірювань за вузлами
+та черги за припущення concurrency=1. Відсутність історії дає fallback, втрата
+всіх вузлів — повідомлення, що оцінка недоступна. Це час до початку, не гарантія
+тривалості конвертації. На `/operations/` оператор бачить навантаження без паролів.
+
+Зміна токена при скасуванні/перепризначенні забороняє старій спробі публікувати
+результат. Відновлення починає нову спробу, не переносить проміжний прогрес
+Whisper; готовий SRT може бути використаний повторно. Повтор CPU-обчислень
+можливий до перевірки токена. PostgreSQL і NFS на A залишаються єдиними точками
+відмови. Локальна конфігурація використовує Django runserver для навчальної демонстрації.

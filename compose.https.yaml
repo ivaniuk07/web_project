@@ -1,0 +1,27 @@
+# Overlay for compose.coordinator.yaml (Docker Compose >= 2.24.4).
+services:
+  web:
+    ports: !reset []
+    environment:
+      DJANGO_TRUST_PROXY: 'true'
+      DJANGO_SECURE_COOKIES: 'true'
+      DJANGO_SECURE_SSL_REDIRECT: 'true'
+      DJANGO_CSRF_TRUSTED_ORIGINS: 'https://${HTTPS_HOST:?Set HTTPS_HOST}:${HTTPS_PORT:-8443}'
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/accounts/login/', headers={'X-Forwarded-Proto':'https'}); urllib.request.urlopen(r, timeout=5)"]
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host A private IP}:${HTTPS_PORT:-8443}:443'
+    environment:
+      HTTPS_HOST: ${HTTPS_HOST:?Set HTTPS_HOST}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+volumes:
+  caddy-data:
+  caddy-config:

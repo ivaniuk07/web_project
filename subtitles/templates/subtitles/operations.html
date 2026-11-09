@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Стан системи — Титри.{% endblock %}
+{% block breadcrumb %}Стан системи{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="5">{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <p class="eyebrow">Керування обробкою</p>
+    <h1>Стан системи</h1>
+    <p>Виконуються: {{ snapshot.running }}. У чергах: {{ snapshot.waiting }}.
+        Без призначеного вузла: {{ snapshot.pending }}. Ще не запущені користувачем: {{ snapshot.awaiting_submission }}.</p>
+</div>
+<section class="workspace-section" aria-labelledby="workers-title">
+    <h2 id="workers-title">Вузли обробки</h2>
+    <div class="table-panel">
+        <table class="studio-table">
+            <thead><tr><th scope="col">Вузол</th><th scope="col">Доступний</th><th scope="col">Heartbeat</th><th scope="col">Виконуються</th><th scope="col">У черзі</th></tr></thead>
+            <tbody>{% for node in snapshot.nodes %}<tr>
+                <td>{{ node.name }}</td><td>{{ node.available|yesno:'так,ні' }}</td>
+                <td>{{ node.heartbeat_at|default:'ще немає' }}</td><td>{{ node.running }}</td><td>{{ node.queued }}</td>
+            </tr>{% empty %}<tr><td colspan="5">Вузли не налаштовані.</td></tr>{% endfor %}</tbody>
+        </table>
+    </div>
+</section>
+<section class="workspace-section" aria-labelledby="active-title">
+    <h2 id="active-title">Активні задачі <span class="count">{{ active_total }}</span></h2>
+    <p class="muted">Показано останні 100 активних задач. UUID потрібний для операторської діагностики.</p>
+    <div class="table-panel">
+        <table class="studio-table">
+            <thead><tr><th scope="col">UUID</th><th scope="col">Файл</th><th scope="col">Власник</th><th scope="col">Вузол</th><th scope="col">Стан</th><th scope="col">Етап</th></tr></thead>
+            <tbody>{% for job in active_jobs %}<tr>
+                <td>{{ job.pk }}</td><td>{{ job.original_name }}</td><td>{{ job.owner.username }}</td>
+                <td>{{ job.node_name|default:'не призначено' }}</td><td>{{ job.get_status_display }}</td><td>{{ job.stage }}</td>
+            </tr>{% empty %}<tr><td colspan="6">Активних задач немає.</td></tr>{% endfor %}</tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

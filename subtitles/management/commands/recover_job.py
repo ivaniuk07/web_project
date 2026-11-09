@@ -19,6 +19,7 @@ class Command(BaseCommand):
                 task_token=None, stage='Обробку перервано',
                 error='Попередню обробку перервано. Запустіть завдання повторно.',
                 updated_at=timezone.now(),
+                finished_at=timezone.now(),
             )
         except ValidationError as exc:
             raise CommandError('Некоректний ідентифікатор задачі.') from exc

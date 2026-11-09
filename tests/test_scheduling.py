@@ -98,6 +98,7 @@ class SchedulingTests(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.FAILED)
         self.assertIsNone(job.task_token)
+        self.assertIsNotNone(job.finished_at)
 
     def test_unpublished_reservation_is_retried(self):
         job = self.job()

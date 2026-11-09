@@ -3,19 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Генератор субтитрів</title>
+    <title>{% block title %}Титри. — Генератор субтитрів{% endblock %}</title>
+    <link rel="icon" href="{% url 'favicon' %}" type="image/svg+xml">
+    <style>{% include 'studio/style.css' %}</style>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <h1><a href="{% url 'home' %}">Генератор субтитрів</a></h1>
-    {% if user.is_authenticated %}
-        <p>Користувач — {{ user.username }}</p>
-        <form method="post" action="{% url 'logout' %}">
-            {% csrf_token %}
-            <button type="submit">Вийти</button>
-        </form>
-    {% endif %}
-    {% for message in messages %}<p role="alert">{{ message }}</p>{% endfor %}
-    {% block content %}{% endblock %}
+    {% include 'studio/icons.svg' %}
+    <a class="skip-link" href="#main-content">До основного вмісту</a>
+    <div class="studio-shell{% if user.is_authenticated %} studio-shell--signed-in{% endif %}">
+        {% if user.is_authenticated %}
+            <aside class="sidebar">
+                {% include 'studio/brand.html' %}
+                <nav class="sidebar-nav" aria-label="Робочий простір">
+                    <a href="{% url 'home' %}"{% if request.resolver_match.url_name == 'home' %} aria-current="page"{% endif %}>
+                        <svg class="icon" aria-hidden="true"><use href="#icon-grid"></use></svg>
+                        Мої відео
+                    </a>
+                    <a href="{% url 'job_history' %}"{% if request.resolver_match.url_name == 'job_history' %} aria-current="page"{% endif %}>
+                        <svg class="icon" aria-hidden="true"><use href="#icon-clock"></use></svg>
+                        Історія
+                    </a>
+                    {% if user.is_staff %}
+                        <a href="{% url 'operations' %}"{% if request.resolver_match.url_name == 'operations' %} aria-current="page"{% endif %}>
+                            <svg class="icon" aria-hidden="true"><use href="#icon-activity"></use></svg>
+                            Стан системи
+                        </a>
+                    {% endif %}
+                </nav>
+            </aside>
+        {% endif %}
+        <div class="main-column">
+            <header class="topbar">
+                {% if user.is_authenticated %}
+                    <div class="breadcrumb">
+                        <span>Робочий простір</span>
+                        <span aria-hidden="true">/</span>
+                        <strong>{% block breadcrumb %}Мої відео{% endblock %}</strong>
+                    </div>
+                    <div class="account">
+                        <span class="avatar" aria-hidden="true">{{ user.get_username|slice:":1"|upper }}</span>
+                        <span class="account-name" title="{{ user.get_username }}">{{ user.get_username }}</span>
+                        <form method="post" action="{% url 'logout' %}">
+                            {% csrf_token %}
+                            <button class="button button--quiet" type="submit">Вийти</button>
+                        </form>
+                    </div>
+                {% else %}
+                    {% include 'studio/brand.html' %}
+                {% endif %}
+            </header>
+            <main class="workspace" id="main-content">
+                {% for message in messages %}<p class="notice" role="alert">{{ message }}</p>{% endfor %}
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -47,7 +47,7 @@ class JobViewTests(TestCase):
 
     def test_anonymous_redirects_to_login(self):
         self.client.logout()
-        for url in ('/', reverse('job_detail', args=[self.job.pk]), reverse('process_video', args=[self.job.pk]), reverse('video_result', args=[self.job.pk]), reverse('download_subtitles', args=[self.job.pk])):
+        for url in ('/', '/history/', reverse('job_detail', args=[self.job.pk]), reverse('process_video', args=[self.job.pk]), reverse('video_result', args=[self.job.pk]), reverse('download_subtitles', args=[self.job.pk])):
             self.assertEqual(self.client.get(url).status_code, 302)
 
     def test_registration_logs_in(self):
@@ -63,10 +63,28 @@ class JobViewTests(TestCase):
         self.assertRedirects(self.client.post(reverse('logout')), reverse('login'))
 
     def test_history_only_shows_own_jobs(self):
-        Job.objects.create(owner=self.other, original_name='private-bob.mp4', source='videos/bob.mp4')
+        Job.objects.filter(pk=self.job.pk).update(status=Job.Status.SUCCEEDED, result='rendered/lesson.mp4')
+        waiting_job = Job.objects.create(
+            owner=self.user, original_name='waiting.mp4', source='videos/waiting.mp4',
+        )
+        foreign_job = Job.objects.create(
+            owner=self.other,
+            original_name='private-bob.mp4',
+            source='videos/bob.mp4',
+            status=Job.Status.SUCCEEDED,
+            result='rendered/bob.mp4',
+        )
         response = self.client.get('/')
         self.assertContains(response, 'lesson.mp4')
         self.assertNotContains(response, 'private-bob.mp4')
+        self.assertContains(response, reverse('video_result', args=[self.job.pk]))
+        self.assertNotContains(response, reverse('video_result', args=[foreign_job.pk]))
+        self.assertNotContains(response, waiting_job.original_name)
+
+        history = self.client.get('/history/')
+        self.assertContains(history, 'lesson.mp4')
+        self.assertContains(history, waiting_job.original_name)
+        self.assertNotContains(history, foreign_job.original_name)
 
     def test_foreign_job_is_inaccessible_for_all_actions(self):
         self.client.force_login(self.other)

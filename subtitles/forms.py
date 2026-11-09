@@ -13,6 +13,10 @@ class UploadForm(forms.Form):
         maximum = settings.MAX_UPLOAD_BYTES / (1024 * 1024)
         formats = ', '.join(settings.ALLOWED_VIDEO_EXTENSIONS)
         self.fields['video'].help_text = f'До {maximum:g} МБ, до {settings.MAX_VIDEO_SECONDS} с. Формати: {formats}.'
+        self.fields['video'].widget.attrs.update({
+            'class': 'visually-hidden',
+            'accept': ','.join(f'.{extension}' for extension in settings.ALLOWED_VIDEO_EXTENSIONS),
+        })
 
     def clean_video(self):
         video = self.cleaned_data['video']

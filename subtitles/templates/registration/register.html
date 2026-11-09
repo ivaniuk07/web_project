@@ -1,10 +1,15 @@
 {% extends 'base.html' %}
+{% block title %}Реєстрація — Титри.{% endblock %}
 {% block content %}
-<h2>Реєстрація</h2>
-<form method="post">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">Зареєструватися</button>
-</form>
-<p><a href="{% url 'login' %}">Увійти</a></p>
+<section class="auth-panel" aria-labelledby="auth-title">
+    <p class="eyebrow">Ваш робочий простір</p>
+    <h1 id="auth-title">Реєстрація</h1>
+    <p class="muted">Створіть обліковий запис, щоб зберігати свої відео й субтитри.</p>
+    <form class="auth-form" method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button class="button button--primary" type="submit">Зареєструватися</button>
+    </form>
+    <p class="auth-footer"><a href="{% url 'login' %}">Увійти</a></p>
+</section>
 {% endblock %}

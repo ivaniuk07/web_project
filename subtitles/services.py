@@ -63,6 +63,8 @@ def enqueue_job(job):
         job.dispatch_attempts = 0
         job.dispatched_at = None
         job.published_at = None
+        job.started_at = None
+        job.finished_at = None
         job.save()
     # Persisted intent survives web/process failures; dispatcher retries it.
     Dispatcher().dispatch_once(job_id=job.pk)
@@ -73,7 +75,7 @@ def cancel_job(job):
         get_user_model().objects.select_for_update().get(pk=job.owner_id)
         Job.objects.filter(pk=job.pk, status__in=[Job.Status.QUEUED, Job.Status.RUNNING]).update(
             status=Job.Status.CANCELLED, stage='Скасовано користувачем',
-            task_token=None, error='', updated_at=timezone.now(),
+            task_token=None, error='', updated_at=timezone.now(), finished_at=timezone.now(),
         )
 
 
@@ -94,7 +96,9 @@ def process_job(job, token=None, node_name=''):
         job.stage = 'Перевірка відео'
         job.node_name = job.node.name if job.node_id else node_name
         job.error = ''
-        job.save(update_fields=['task_token', 'status', 'stage', 'node_name', 'error', 'updated_at'])
+        job.started_at = timezone.now()
+        job.finished_at = None
+        job.save(update_fields=['task_token', 'status', 'stage', 'node_name', 'error', 'started_at', 'finished_at', 'updated_at'])
     token = job.task_token
     active = Job.objects.filter(pk=job.pk, task_token=token, status=Job.Status.RUNNING)
 
@@ -126,7 +130,7 @@ def process_job(job, token=None, node_name=''):
             raise ProcessingCancelled('Обробку скасовано.')
         burn_subtitles(Path(job.source.path), captions, output, budget=budget)
         budget.remaining(settings.JOB_TIMEOUT_SECONDS)
-        if not active.update(status=Job.Status.SUCCEEDED, stage='Готово', result=result_name, error='', updated_at=timezone.now()):
+        if not active.update(status=Job.Status.SUCCEEDED, stage='Готово', result=result_name, error='', finished_at=timezone.now(), updated_at=timezone.now()):
             raise ProcessingCancelled('Обробку скасовано.')
         completed = True
     except ProcessingCancelled:
@@ -137,7 +141,7 @@ def process_job(job, token=None, node_name=''):
             error = ' '.join(exc.messages)
         else:
             error = str(exc) if isinstance(exc, ProcessingError) else 'Помилка обробки. Спробуйте ще раз.'
-        active.update(status=Job.Status.FAILED, stage='Помилка обробки', error=error, updated_at=timezone.now())
+        active.update(status=Job.Status.FAILED, stage='Помилка обробки', error=error, finished_at=timezone.now(), updated_at=timezone.now())
     finally:
         if not completed:
             output.unlink(missing_ok=True)

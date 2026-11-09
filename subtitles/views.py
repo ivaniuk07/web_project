@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from .forms import UploadForm
 from .models import Job
+from .monitoring import estimate_wait
 from .services import create_job, enqueue_job, cancel_job as cancel_job_service
 
 
@@ -39,8 +40,19 @@ def home(request):
             form.add_error('video', exc)
         else:
             return redirect('job_detail', job_id=job.pk)
+    latest_result = Job.objects.filter(
+        owner=request.user, status=Job.Status.SUCCEEDED,
+    ).exclude(result='').first()
     return render(request, 'subtitles/home.html', {
         'form': form,
+        'latest_result': latest_result,
+    })
+
+
+@login_required
+@require_GET
+def job_history(request):
+    return render(request, 'subtitles/history.html', {
         'jobs': Job.objects.filter(owner=request.user),
     })
 
@@ -55,6 +67,7 @@ def job_detail(request, job_id):
     job = _owned_job(request, job_id)
     return render(request, 'subtitles/detail.html', {
         'job': job,
+        'waiting_estimate': estimate_wait(job),
         'can_process': job.status == Job.Status.FAILED or (job.status == Job.Status.QUEUED and not job.task_token),
         'can_cancel': job.status in [Job.Status.QUEUED, Job.Status.RUNNING],
     })

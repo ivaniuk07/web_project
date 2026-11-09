@@ -10,6 +10,12 @@ ALLOWED_HOSTS = [
     for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
     if host.strip()
 ]
+SESSION_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIES', 'false').lower() == 'true'
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', 'false').lower() == 'true'
+CSRF_TRUSTED_ORIGINS = [value.strip() for value in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if value.strip()]
+# Enable only behind our TLS proxy, with the backend HTTP port unpublished.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if os.environ.get('DJANGO_TRUST_PROXY', 'false').lower() == 'true' else None
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -95,6 +101,7 @@ NODE_RETRY_SECONDS = float(os.environ.get('NODE_RETRY_SECONDS', 10))
 DISPATCH_INTERVAL_SECONDS = float(os.environ.get('DISPATCH_INTERVAL_SECONDS', 2))
 DISPATCH_RESERVATION_SECONDS = float(os.environ.get('DISPATCH_RESERVATION_SECONDS', 15))
 MAX_DISPATCH_ATTEMPTS = int(os.environ.get('MAX_DISPATCH_ATTEMPTS', 5))
+ETA_FALLBACK_SECONDS = max(1, int(os.environ.get('ETA_FALLBACK_SECONDS', 60)))
 
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'home'

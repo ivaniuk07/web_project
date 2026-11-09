@@ -1,0 +1,41 @@
+# Optional reserved node-3 on host A. Add it to WORKER_NODES on both hosts first.
+services:
+  redis3:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes', --requirepass, '${EXTRA_REDIS_PASSWORD:?Set EXTRA_REDIS_PASSWORD}']
+    environment:
+      REDISCLI_AUTH: ${EXTRA_REDIS_PASSWORD:?Set EXTRA_REDIS_PASSWORD}
+    ports:
+      - '${PRIVATE_BIND_IP:?Set host A private IP}:6381:6379'
+    volumes:
+      - redis3-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  worker3:
+    image: subtitle-studio:local
+    env_file: .env.coordinator
+    environment:
+      MEDIA_ROOT: /app/media
+      POSTGRES_HOST: postgres
+      CELERY_BROKER_URL: redis://:${EXTRA_REDIS_PASSWORD:?Set EXTRA_REDIS_PASSWORD}@redis3:6379/0
+      CELERY_TASK_DEFAULT_QUEUE: subtitles
+      WORKER_NODE_NAME: node-3
+      WORKER_NODES: ${WORKER_NODES:?Set all three nodes}
+    volumes:
+      - type: bind
+        source: ${SHARED_MEDIA_PATH:?Set shared media path}
+        target: /app/media
+        bind:
+          create_host_path: false
+      - model-cache:/home/app/.cache/huggingface
+    command: [celery, -A, config, worker, -l, info, --concurrency=1, --prefetch-multiplier=1, --hostname=node-3@%h]
+    depends_on:
+      web:
+        condition: service_healthy
+      redis3:
+        condition: service_healthy
+volumes:
+  redis3-data:

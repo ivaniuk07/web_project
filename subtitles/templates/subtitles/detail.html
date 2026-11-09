@@ -1,36 +1,71 @@
 {% extends 'base.html' %}
+{% block title %}{{ job.original_name }} — Титри.{% endblock %}
+{% block breadcrumb %}Завдання{% endblock %}
 {% block head %}
 {% if job.status == 'running' or job.status == 'queued' and job.task_token %}<meta http-equiv="refresh" content="3">{% endif %}
 {% endblock %}
 {% block content %}
-<h2>{{ job.original_name }}</h2>
-<p>Стан — {{ job.get_status_display }}</p>
-<p>Етап — {{ job.stage }}</p>
-<p>Створено {{ job.created_at|date:'d.m.Y H:i' }}</p>
-{% if job.node_name %}<p>Вузол — {{ job.node_name }}</p>{% endif %}
-{% if job.error %}<p role="alert">{{ job.error }}</p>{% endif %}
-{% if can_process %}
-    <form method="post" action="{% url 'process_video' job.pk %}">
-        {% csrf_token %}
-        <button type="submit">Створити відео із субтитрами</button>
-    </form>
-    <p>Завдання оброблятиметься у фоні. Сторінка оновлює стан автоматично.</p>
-{% endif %}
-{% if can_cancel %}
-    <form method="post" action="{% url 'cancel_job' job.pk %}">
-        {% csrf_token %}
-        <button type="submit">Скасувати завдання</button>
-    </form>
-{% endif %}
-{% if job.status == 'succeeded' and job.result %}
-    <p>
-        <video controls preload="metadata" width="640" style="max-width: 100%;">
-            <source src="{% url 'video_result' job.pk %}" type="video/mp4">
-            Ваш браузер не підтримує відтворення відео.
-        </video>
-    </p>
-    <p><a href="{% url 'video_result' job.pk %}?download=1">Завантажити відео</a></p>
-{% endif %}
-{% if job.subtitles and job.status != 'cancelled' %}<p><a href="{% url 'download_subtitles' job.pk %}">Завантажити SRT</a></p>{% endif %}
-<p><a href="{% url 'home' %}">Мої завдання</a></p>
+<a class="back-link" href="{% url 'job_history' %}">
+    <svg class="icon" aria-hidden="true"><use href="#icon-back"></use></svg>
+    Мої завдання
+</a>
+<div class="page-heading">
+    <p class="eyebrow">Обробка відео</p>
+    <h1>{{ job.original_name }}</h1>
+</div>
+<div class="detail-grid">
+    {% if job.status == 'succeeded' and job.result %}
+        <section class="result-card" aria-labelledby="player-title">
+            <div class="video-frame">
+                <video controls preload="metadata" aria-labelledby="player-title">
+                    <source src="{% url 'video_result' job.pk %}" type="video/mp4">
+                    Ваш браузер не підтримує відтворення відео.
+                </video>
+            </div>
+            <div class="result-summary">
+                <h2 id="player-title">Відео із субтитрами</h2>
+                <a class="button button--primary" href="{% url 'video_result' job.pk %}?download=1">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                    Завантажити відео
+                </a>
+            </div>
+        </section>
+    {% endif %}
+    <section class="info-panel" aria-labelledby="status-title">
+        <div class="section-heading">
+            <h2 id="status-title">Деталі завдання</h2>
+            <span class="status status--{{ job.status }}">Стан — {{ job.get_status_display }}</span>
+        </div>
+        <div class="job-info">
+            <p>Етап — {{ job.stage }}</p>
+            {% if waiting_estimate %}<p class="estimate">{{ waiting_estimate.label }}</p>{% endif %}
+            <p>Створено {{ job.created_at|date:'d.m.Y H:i' }}</p>
+            {% if job.node_name %}<p>Вузол — {{ job.node_name }}</p>{% endif %}
+        </div>
+        {% if job.error %}<p class="notice" role="alert">{{ job.error }}</p>{% endif %}
+        {% if can_process %}
+            <p class="muted">Завдання оброблятиметься у фоні. Сторінка оновлює стан автоматично.</p>
+        {% endif %}
+        <div class="job-actions">
+            {% if can_process %}
+                <form method="post" action="{% url 'process_video' job.pk %}">
+                    {% csrf_token %}
+                    <button class="button button--primary" type="submit">Створити відео із субтитрами</button>
+                </form>
+            {% endif %}
+            {% if can_cancel %}
+                <form method="post" action="{% url 'cancel_job' job.pk %}">
+                    {% csrf_token %}
+                    <button class="button button--outline" type="submit">Скасувати завдання</button>
+                </form>
+            {% endif %}
+            {% if job.subtitles and job.status != 'cancelled' %}
+                <a class="button button--outline" href="{% url 'download_subtitles' job.pk %}">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                    Завантажити SRT
+                </a>
+            {% endif %}
+        </div>
+    </section>
+</div>
 {% endblock %}

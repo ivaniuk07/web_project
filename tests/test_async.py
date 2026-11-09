@@ -107,3 +107,17 @@ class AsyncJobTests(TestCase):
         with patch('subtitles.services.generate_subtitles') as generate:
             process_video_task.run(str(self.job.pk), self.job.source.name, old_token)
         generate.assert_not_called()
+
+    @patch('subtitles.tasks.process_video_task.apply_async')
+    def test_manual_recovery_finishes_attempt_and_retry_resets_timing(self, publish):
+        import uuid
+        from django.core.management import call_command
+        from django.utils import timezone
+        Job.objects.filter(pk=self.job.pk).update(status=Job.Status.RUNNING, task_token=uuid.uuid4(), started_at=timezone.now())
+        call_command('recover_job', str(self.job.pk), verbosity=0)
+        self.job.refresh_from_db()
+        self.assertIsNotNone(self.job.finished_at)
+        enqueue_job(self.job)
+        self.job.refresh_from_db()
+        self.assertIsNone(self.job.started_at)
+        self.assertIsNone(self.job.finished_at)

@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}Історія — Титри.{% endblock %}
+{% block breadcrumb %}Історія{% endblock %}
+{% block content %}
+<section class="workspace-section" aria-labelledby="history-title">
+    <div class="section-heading">
+        <h1 id="history-title">Історія</h1>
+        <span class="count">{{ jobs|length }}</span>
+    </div>
+    {% if jobs %}
+        <div class="table-panel">
+            <table class="studio-table history-table">
+                <thead><tr><th scope="col">Відео</th><th scope="col">Стан</th><th scope="col" class="date-column">Створено</th><th scope="col"><span class="visually-hidden">Відкрити</span></th></tr></thead>
+                <tbody>
+                    {% for job in jobs %}
+                        <tr>
+                            <td>
+                                <div class="file-row">
+                                    <span class="file-icon"><svg class="icon" aria-hidden="true"><use href="#icon-video"></use></svg></span>
+                                    <div class="file-label">
+                                        <a class="file-name" href="{% url 'job_detail' job.pk %}">{{ job.original_name }}</a>
+                                        {% if job.node_name %}<span class="muted file-detail">{{ job.node_name }}</span>{% endif %}
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <span class="status status--{{ job.status }}">{{ job.get_status_display }}</span>
+                                {% if job.status == 'running' %}<span class="muted file-detail">{{ job.stage }}</span>{% endif %}
+                            </td>
+                            <td class="date-column muted">{{ job.created_at|date:'d.m.Y H:i' }}</td>
+                            <td class="table-action">
+                                <a class="icon-link" href="{% url 'job_detail' job.pk %}" aria-label="Відкрити {{ job.original_name }}">
+                                    <svg class="icon" aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty-history">Поки що завдань немає. Додайте перше відео, щоб почати.</p>
+    {% endif %}
+</section>
+{% endblock %}

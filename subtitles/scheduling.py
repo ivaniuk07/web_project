@@ -81,6 +81,7 @@ class Dispatcher:
             Job.objects.filter(pk=job.pk, task_token=job.task_token, status=job.status).update(
                 status=Job.Status.QUEUED, task_token=uuid.uuid4(), node=None,
                 node_name='', dispatched_at=None, published_at=None,
+                started_at=None, finished_at=None,
                 stage='Очікування повторного призначення вузла', updated_at=now,
             )
 
@@ -111,7 +112,8 @@ class Dispatcher:
                 job.error = 'Вичерпано кількість спроб передачі до черги. Запустіть задачу повторно.'
                 job.stage = 'Помилка передачі'
                 job.task_token = None
-                job.save(update_fields=['status', 'error', 'stage', 'task_token', 'updated_at'])
+                job.finished_at = now
+                job.save(update_fields=['status', 'error', 'stage', 'task_token', 'finished_at', 'updated_at'])
                 return True
             loads = dict(Job.objects.filter(
                 status__in=[Job.Status.QUEUED, Job.Status.RUNNING], node__isnull=False,

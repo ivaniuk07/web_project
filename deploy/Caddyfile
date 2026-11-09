@@ -1,0 +1,11 @@
+{
+    # IP clients may omit SNI; select the certificate for the configured private host.
+    default_sni {$HTTPS_HOST}
+}
+
+https://{$HTTPS_HOST} {
+    tls internal
+    reverse_proxy web:8000 {
+        header_up X-Forwarded-Proto https
+    }
+}

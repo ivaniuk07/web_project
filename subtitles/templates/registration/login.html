@@ -1,11 +1,16 @@
 {% extends 'base.html' %}
+{% block title %}Вхід — Титри.{% endblock %}
 {% block content %}
-<h2>Вхід</h2>
-<form method="post">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <input type="hidden" name="next" value="{{ next }}">
-    <button type="submit">Увійти</button>
-</form>
-<p><a href="{% url 'register' %}">Створити обліковий запис</a></p>
+<section class="auth-panel" aria-labelledby="auth-title">
+    <p class="eyebrow">Ваш робочий простір</p>
+    <h1 id="auth-title">Вхід</h1>
+    <p class="muted">Увійдіть, щоб додавати відео й переглядати свої завдання.</p>
+    <form class="auth-form" method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <input type="hidden" name="next" value="{{ next }}">
+        <button class="button button--primary" type="submit">Увійти</button>
+    </form>
+    <p class="auth-footer"><a href="{% url 'register' %}">Створити обліковий запис</a></p>
+</section>
 {% endblock %}

@@ -1,20 +1,57 @@
 {% extends 'base.html' %}
+{% block title %}Мої відео — Титри.{% endblock %}
 {% block content %}
-<h2>Завантажити відео</h2>
-<form method="post" enctype="multipart/form-data">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">Завантажити відео</button>
-</form>
-<h2>Мої завдання</h2>
-<ul>
-    {% for job in jobs %}
-        <li>
-            <a href="{% url 'job_detail' job.pk %}">{{ job.original_name }}</a>
-            — {{ job.get_status_display }} — {{ job.created_at|date:'d.m.Y H:i' }}
-        </li>
-    {% empty %}
-        <li>Поки що завдань немає.</li>
-    {% endfor %}
-</ul>
+<div class="page-heading">
+    <p class="eyebrow">Ваша відеомедіатека</p>
+    <h1>Мої відео</h1>
+    <p>Завантажуйте ролики, стежте за обробкою та знаходьте готові субтитри в історії.</p>
+</div>
+
+<div class="studio-grid">
+    <form class="upload-zone" id="upload" method="post" enctype="multipart/form-data" aria-labelledby="upload-title">
+        {% csrf_token %}
+        <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#icon-upload"></use></svg></span>
+        <h2 id="upload-title">Додайте відео</h2>
+        <p class="muted">Перетягніть файл сюди або оберіть його на пристрої.</p>
+        <div class="upload-actions">
+            {{ form.video }}
+            <label class="button button--outline file-choice" for="{{ form.video.id_for_label }}">Обрати відео</label>
+            <button class="button button--primary" type="submit">Завантажити відео</button>
+        </div>
+        <p id="selected-video" class="selected-video" aria-live="polite"></p>
+        {{ form.non_field_errors }}
+        {{ form.video.errors }}
+        <p class="helptext" id="{{ form.video.auto_id }}_helptext">{{ form.video.help_text }}</p>
+    </form>
+
+    <section class="result-card" aria-labelledby="recent-title">
+        {% if latest_result %}
+            <div class="video-frame">
+                <video controls preload="metadata" aria-label="Останній результат">
+                    <source src="{% url 'video_result' latest_result.pk %}" type="video/mp4">
+                    Ваш браузер не підтримує відтворення відео.
+                </video>
+            </div>
+            <div class="result-summary">
+                <div class="result-name">
+                    <p class="eyebrow">Останній результат</p>
+                    <h2 id="recent-title"><a href="{% url 'job_detail' latest_result.pk %}">{{ latest_result.original_name }}</a></h2>
+                </div>
+                <div class="result-links">
+                    <a class="button button--outline" href="{% url 'video_result' latest_result.pk %}?download=1" aria-label="Завантажити MP4">MP4</a>
+                    {% if latest_result.subtitles %}
+                        <a class="button button--outline" href="{% url 'download_subtitles' latest_result.pk %}" aria-label="Завантажити SRT">SRT</a>
+                    {% endif %}
+                </div>
+            </div>
+        {% else %}
+            <div class="empty-result">
+                <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#icon-video"></use></svg></span>
+                <h2 id="recent-title">Останній результат</h2>
+                <p class="muted">Готове відео із субтитрами з’явиться тут після обробки.</p>
+            </div>
+        {% endif %}
+    </section>
+</div>
 {% endblock %}
+{% block scripts %}<script>{% include 'studio/upload.js' %}</script>{% endblock %}

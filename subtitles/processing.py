@@ -13,6 +13,20 @@ from typing import Protocol
 
 from django.conf import settings
 
+from .subtitle_styles import SubtitleStyle
+
+
+ASS_STYLE_OVERRIDES = {
+    SubtitleStyle.YELLOW: 'PrimaryColour=&H004CDCFF,Bold=-1,Outline=2,Shadow=0',
+    SubtitleStyle.DARK_BOX: 'BorderStyle=3,OutlineColour=&H30000000,BackColour=&H30000000,Outline=3,Shadow=0',
+    SubtitleStyle.CINEMA: 'FontName=serif,FontSize=24,PrimaryColour=&H00D6F1FF,Italic=-1,Outline=1,Shadow=0',
+    SubtitleStyle.NEON: 'FontSize=21,PrimaryColour=&H00F9E67C,OutlineColour=&H0037211C,Bold=-1,Outline=2,Shadow=0',
+    SubtitleStyle.STUDIO: (
+        'FontSize=19,PrimaryColour=&H00351717,Bold=-1,BorderStyle=3,'
+        'OutlineColour=&H00FFCFC5,BackColour=&H00FFCFC5,Outline=3,Shadow=0'
+    ),
+}
+
 
 class ProcessingError(Exception):
     """A message suitable for display on the upload page."""
@@ -58,14 +72,18 @@ class SpeechRecognizer(Protocol):
 
 
 class WhisperRecognizer:
-    def __init__(self, budget):
+    def __init__(self, budget, language=None):
         self.budget = budget
+        self.language = language
 
     def recognize(self, audio):
         self.budget.set_stage('Розпізнавання мовлення')
-        result = _run([
+        command = [
             sys.executable, '-m', 'subtitles.speech', str(audio.resolve()), settings.WHISPER_MODEL,
-        ], self.budget.remaining(settings.TRANSCRIBE_TIMEOUT), check_cancel=self.budget.check_cancel, cwd=settings.BASE_DIR)
+        ]
+        if self.language:
+            command.extend(['--language', self.language])
+        result = _run(command, self.budget.remaining(settings.TRANSCRIBE_TIMEOUT), check_cancel=self.budget.check_cancel, cwd=settings.BASE_DIR)
         return [Segment(**item) for item in json.loads(result.stdout)]
 
 
@@ -145,10 +163,10 @@ def render_srt(segments: list[Segment]) -> str:
     return ''.join(blocks)
 
 
-def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecognizer | None = None, budget=None):
+def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecognizer | None = None, budget=None, *, language=None):
     """A recognizer can be replaced without changing the conversion workflow."""
     budget = budget or ProcessingBudget()
-    recognizer = recognizer or WhisperRecognizer(budget)
+    recognizer = recognizer or WhisperRecognizer(budget, language)
     try:
         with tempfile.TemporaryDirectory(prefix='subtitle-audio-') as directory:
             audio = Path(directory) / 'audio.wav'
@@ -173,10 +191,13 @@ def generate_subtitles(source: Path, destination: Path, recognizer: SpeechRecogn
         raise ProcessingError('Помилка розпізнавання. Перевірте доступ до моделі Whisper та спробуйте ще раз.') from exc
 
 
-def burn_subtitles(source: Path, captions: Path, destination: Path, budget=None):
+def burn_subtitles(source: Path, captions: Path, destination: Path, budget=None, *, subtitle_style=SubtitleStyle.CLASSIC):
     """Render captions into an H.264 MP4 and publish only a complete result."""
     budget = budget or ProcessingBudget()
     budget.set_stage('Вбудовування субтитрів')
+    subtitle_filter = 'subtitles=filename=captions.srt'
+    if overrides := ASS_STYLE_OVERRIDES.get(subtitle_style):
+        subtitle_filter += f":force_style='{overrides}'"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='render-', dir=destination.parent) as directory:
         workdir = Path(directory).resolve()
@@ -186,7 +207,7 @@ def burn_subtitles(source: Path, captions: Path, destination: Path, budget=None)
         _run([
             settings.FFMPEG_BINARY, '-nostdin', '-v', 'error', '-y',
             '-i', str(source.resolve()), '-map', '0:v:0', '-map', '0:a:0?',
-            '-vf', 'subtitles=filename=captions.srt,pad=ceil(iw/2)*2:ceil(ih/2)*2',
+            '-vf', f'{subtitle_filter},pad=ceil(iw/2)*2:ceil(ih/2)*2',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-movflags', '+faststart', str(output),
         ], budget.remaining(settings.VIDEO_RENDER_TIMEOUT), check_cancel=budget.check_cancel, cwd=workdir)

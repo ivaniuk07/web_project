@@ -17,9 +17,9 @@ class SchedulingTests(TestCase):
         self.router = Mock()
         self.dispatcher = Dispatcher(router=self.router)
 
-    def job(self):
+    def job(self, **values):
         import uuid
-        return Job.objects.create(owner=self.user, source='videos/' + str(uuid.uuid4()) + '.mp4', original_name='clip.mp4', task_token=uuid.uuid4())
+        return Job.objects.create(owner=self.user, source='videos/' + str(uuid.uuid4()) + '.mp4', original_name='clip.mp4', task_token=uuid.uuid4(), **values)
 
     def test_jobs_choose_different_nodes_and_store_route(self):
         a, b = self.job(), self.job()
@@ -38,6 +38,30 @@ class SchedulingTests(TestCase):
         self.dispatcher.dispatch_once()
         job.refresh_from_db()
         self.assertEqual(job.node, self.second)
+
+    def test_two_short_jobs_leave_less_work_than_one_long_job(self):
+        self.job(node=self.first, duration_seconds=600, status=Job.Status.RUNNING, started_at=timezone.now())
+        for _ in range(2):
+            self.job(node=self.second, duration_seconds=20)
+        target = self.job(duration_seconds=30)
+
+        self.dispatcher.dispatch_once(job_id=target.pk)
+
+        target.refresh_from_db()
+        self.assertEqual(target.node, self.second)
+
+    def test_faster_worker_can_finish_first_even_with_a_queue(self):
+        finished_at = timezone.now()
+        for node, processing_seconds in ((self.first, 30), (self.second, 120)):
+            self.job(node=node, status=Job.Status.SUCCEEDED, duration_seconds=60,
+                     started_at=finished_at - timedelta(seconds=processing_seconds), finished_at=finished_at)
+        self.job(node=self.first, duration_seconds=20)
+        target = self.job(duration_seconds=60)
+
+        self.dispatcher.dispatch_once(job_id=target.pk)
+
+        target.refresh_from_db()
+        self.assertEqual(target.node, self.first)
 
     def test_no_nodes_keeps_job_waiting(self):
         WorkerNode.objects.update(heartbeat_at=None)
@@ -118,12 +142,19 @@ class SchedulingTests(TestCase):
         self.assertEqual(job.status, Job.Status.CANCELLED)
 
 
+    @override_settings(JOB_TIMEOUT_SECONDS=7200)
     def test_stale_running_child_recovers_with_live_parent(self):
         job = self.job()
         self.dispatcher.dispatch_once()
         job.refresh_from_db()
         old_token = job.task_token
         Job.objects.filter(pk=job.pk).update(status=Job.Status.RUNNING, updated_at=timezone.now() - timedelta(hours=1))
+        self.dispatcher.recover()
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.Status.RUNNING)
+        self.assertEqual(job.task_token, old_token)
+
+        Job.objects.filter(pk=job.pk).update(updated_at=timezone.now() - timedelta(hours=3))
         self.dispatcher.recover()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.QUEUED)

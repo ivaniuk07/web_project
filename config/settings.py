@@ -24,8 +24,16 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'rest_framework.authtoken',
     'subtitles',
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.TokenAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
+    'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
+}
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -64,22 +72,22 @@ USE_I18N = True
 USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media')))
-MAX_UPLOAD_BYTES = int(os.environ.get('MAX_UPLOAD_BYTES', 100 * 1024 * 1024))
+MAX_UPLOAD_BYTES = int(os.environ.get('MAX_UPLOAD_BYTES', 1024 ** 3))
 ALLOWED_VIDEO_EXTENSIONS = [
     value.strip().lower().lstrip('.')
     for value in os.environ.get('ALLOWED_VIDEO_EXTENSIONS', 'mp4,mov,mkv,webm,avi').split(',')
     if value.strip()
 ]
 MAX_ACTIVE_JOBS_PER_USER = int(os.environ.get('MAX_ACTIVE_JOBS_PER_USER', 3))
-JOB_TIMEOUT_SECONDS = float(os.environ.get('JOB_TIMEOUT_SECONDS', 900))
+JOB_TIMEOUT_SECONDS = float(os.environ.get('JOB_TIMEOUT_SECONDS', 7200))
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-MAX_VIDEO_SECONDS = int(os.environ.get('MAX_VIDEO_SECONDS', 600))
+MAX_VIDEO_SECONDS = int(os.environ.get('MAX_VIDEO_SECONDS', 3600))
 MEDIA_PROBE_TIMEOUT = int(os.environ.get('MEDIA_PROBE_TIMEOUT', 20))
-FFMPEG_TIMEOUT = int(os.environ.get('FFMPEG_TIMEOUT', 120))
+FFMPEG_TIMEOUT = int(os.environ.get('FFMPEG_TIMEOUT', 600))
 FFMPEG_BINARY = os.environ.get('FFMPEG_BINARY', 'ffmpeg')
-VIDEO_RENDER_TIMEOUT = int(os.environ.get('VIDEO_RENDER_TIMEOUT', 600))
-TRANSCRIBE_TIMEOUT = int(os.environ.get('TRANSCRIBE_TIMEOUT', 600))
+VIDEO_RENDER_TIMEOUT = int(os.environ.get('VIDEO_RENDER_TIMEOUT', 3600))
+TRANSCRIBE_TIMEOUT = int(os.environ.get('TRANSCRIBE_TIMEOUT', 3600))
 WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'tiny')
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')

@@ -38,6 +38,7 @@
         </div>
         <div class="job-info">
             <p>Етап — {{ job.stage }}</p>
+            <p>Стиль субтитрів — {{ job.get_subtitle_style_display }}</p>
             {% if waiting_estimate %}<p class="estimate">{{ waiting_estimate.label }}</p>{% endif %}
             <p>Створено {{ job.created_at|date:'d.m.Y H:i' }}</p>
             {% if job.node_name %}<p>Вузол — {{ job.node_name }}</p>{% endif %}

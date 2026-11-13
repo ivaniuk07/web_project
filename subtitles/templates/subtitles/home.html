@@ -16,12 +16,34 @@
         <div class="upload-actions">
             {{ form.video }}
             <label class="button button--outline file-choice" for="{{ form.video.id_for_label }}">Обрати відео</label>
-            <button class="button button--primary" type="submit">Завантажити відео</button>
         </div>
         <p id="selected-video" class="selected-video" aria-live="polite"></p>
         {{ form.non_field_errors }}
         {{ form.video.errors }}
         <p class="helptext" id="{{ form.video.auto_id }}_helptext">{{ form.video.help_text }}</p>
+        <div class="subtitle-language">
+            {{ form.subtitle_language.label_tag }}
+            {{ form.subtitle_language }}
+            <p class="helptext" id="{{ form.subtitle_language.auto_id }}_helptext">{{ form.subtitle_language.help_text }}</p>
+            {{ form.subtitle_language.errors }}
+        </div>
+        <fieldset class="subtitle-styles" aria-describedby="subtitle-style-help{% if form.subtitle_style.errors %} {{ form.subtitle_style.auto_id }}_error{% endif %}">
+            <legend>{{ form.subtitle_style.label }}</legend>
+            <p class="helptext" id="subtitle-style-help">Оберіть вигляд субтитрів у готовому відео.</p>
+            <div class="subtitle-style-options">
+                {% for option in form.subtitle_style %}
+                    <div class="subtitle-style-option">
+                        {{ option.tag }}
+                        <label for="{{ option.id_for_label }}">
+                            <span class="subtitle-sample subtitle-sample--{{ option.data.value }}" aria-hidden="true"><span>Привіт!</span></span>
+                            <span>{{ option.choice_label }}</span>
+                        </label>
+                    </div>
+                {% endfor %}
+            </div>
+            {{ form.subtitle_style.errors }}
+        </fieldset>
+        <button class="button button--primary" type="submit">Завантажити відео</button>
     </form>
 
     <section class="result-card" aria-labelledby="recent-title">

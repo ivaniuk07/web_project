@@ -1,0 +1,65 @@
+{
+  "info": {
+    "name": "Титри — завдання та балансування",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {"key": "key", "value": "Authorization", "type": "string"},
+      {"key": "value", "value": "Token {{api_token}}", "type": "string"},
+      {"key": "in", "value": "header", "type": "string"}
+    ]
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://127.0.0.1:8000"},
+    {"key": "api_token", "value": ""},
+    {"key": "job_id", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "Завантажити й запустити обробку",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/api/jobs/",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "video", "type": "file", "src": null},
+            {"key": "subtitle_style", "type": "text", "value": "classic"}
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Завдання створено', () => pm.response.to.have.status(201));",
+              "if (pm.response.code === 201) {",
+              "    pm.collectionVariables.set('job_id', pm.response.json().id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Перевірити статус і вузол",
+      "request": {"method": "GET", "url": "{{base_url}}/api/jobs/{{job_id}}/"}
+    },
+    {
+      "name": "Завантажити SRT",
+      "request": {"method": "GET", "url": "{{base_url}}/api/jobs/{{job_id}}/subtitles/"}
+    },
+    {
+      "name": "Завантажити MP4",
+      "request": {"method": "GET", "url": "{{base_url}}/api/jobs/{{job_id}}/video/"}
+    },
+    {
+      "name": "Перевірити навантаження на вузли (staff)",
+      "request": {"method": "GET", "url": "{{base_url}}/api/operations/"}
+    }
+  ]
+}

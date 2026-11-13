@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from itertools import chain, repeat
 from pathlib import Path
 
 
@@ -21,7 +22,7 @@ class Browser:
         self.cookies = http.cookiejar.CookieJar()
         self.client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies), urllib.request.HTTPSHandler(context=context))
 
-    def request(self, path, data=None, content_type=None, csrf=True):
+    def request(self, path, data=None, content_type=None, csrf=True, *, content_length=None):
         headers = {}
         if data is not None:
             if csrf:
@@ -30,6 +31,8 @@ class Browser:
                     headers['X-CSRFToken'] = token
             headers.update(Origin=self.origin, Referer=self.base+'/')
             headers['Content-Type'] = content_type or 'application/x-www-form-urlencoded'
+        if content_length is not None:
+            headers['Content-Length'] = str(content_length)
         request = urllib.request.Request(self.base+path, data=data, headers=headers)
         try:
             response = self.client.open(request, timeout=180)
@@ -44,10 +47,15 @@ class Browser:
     def post(self, path, values=None, csrf=True):
         return self.request(path, urllib.parse.urlencode(values or {}).encode(), csrf=csrf)
 
-    def upload(self, data, filename='clip.mp4'):
+    def upload(self, data, filename='clip.mp4', *, size=None):
         boundary = 'subtitle-'+secrets.token_hex(12)
-        body = (f'--{boundary}\r\nContent-Disposition: form-data; name="video"; filename="{filename}"\r\nContent-Type: video/mp4\r\n\r\n'.encode()+data+f'\r\n--{boundary}--\r\n'.encode())
-        return self.request('/', body, 'multipart/form-data; boundary='+boundary)
+        prefix = f'--{boundary}\r\nContent-Disposition: form-data; name="video"; filename="{filename}"\r\nContent-Type: video/mp4\r\n\r\n'.encode()
+        suffix = f'\r\n--{boundary}--\r\n'.encode()
+        if size is None:
+            size, data = len(data), (data,)
+        body = chain((prefix,), data, (suffix,))
+        return self.request('/', body, 'multipart/form-data; boundary='+boundary,
+                            content_length=len(prefix) + size + len(suffix))
 
 
 def main():
@@ -58,7 +66,7 @@ def main():
     parser.add_argument('--video', required=True)
     parser.add_argument('--long-video', required=True)
     parser.add_argument('--too-long-video', required=True)
-    parser.add_argument('--max-upload-bytes', type=int, default=104857600)
+    parser.add_argument('--max-upload-bytes', type=int, default=1024 ** 3)
     parser.add_argument('--pause-for-scaling', action='store_true', help='Pause with a busy pair for the operator to run the separate scaler.')
     parser.add_argument('--report', default='.superpowers/stage8/rehearsal.json')
     args = parser.parse_args()
@@ -145,7 +153,11 @@ def main():
         for data, name in [(b'broken video','broken.mp4'),(short,'bad.txt'),(Path(args.too_long_video).read_bytes(),'too-long.mp4')]:
             status, url, _ = admin.upload(data, name)
             assert status == 200 and '/jobs/' not in url
-        status, url, _ = admin.upload(b'0'*(args.max_upload_bytes+1), 'oversized.mp4')
+        oversized_size = args.max_upload_bytes + 1
+        block_size = 1024 * 1024
+        full_blocks, remainder = divmod(oversized_size, block_size)
+        oversized = chain(repeat(b'0' * block_size, full_blocks), (b'0' * remainder,))
+        status, url, _ = admin.upload(oversized, 'oversized.mp4', size=oversized_size)
         assert status == 200 and '/jobs/' not in url
         record('invalid_file_extension_duration_and_size_rejected', size_limit=args.max_upload_bytes)
         waiting = [upload(admin, short, f'quota-{i}.mp4') for i in range(3)]

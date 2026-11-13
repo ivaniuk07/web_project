@@ -19,8 +19,8 @@ h1, h2 { line-height: 1.2; }
 h1 { font-size: clamp(1.65rem, 3vw, 2.2rem); letter-spacing: -.04em; overflow-wrap: anywhere; }
 h2 { font-size: 1.05rem; letter-spacing: -.02em; }
 a { color: inherit; text-decoration: none; }
-button, input { font: inherit; }
-a:focus-visible, button:focus-visible, input:focus-visible,
+button, input, select { font: inherit; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
 input[type="file"]:focus-visible + .file-choice {
     outline: 3px solid var(--accent);
     outline-offset: 3px;
@@ -210,6 +210,83 @@ input[type="file"]:focus-visible + .file-choice {
 .selected-video { font-size: .81rem; color: var(--accent); overflow-wrap: anywhere; max-width: 100%; }
 .selected-video:empty { display: none; }
 .helptext { display: block; font-size: .76rem; color: var(--muted); }
+.subtitle-language {
+    display: grid;
+    gap: 4px;
+    width: min(100%, 410px);
+    text-align: left;
+}
+.subtitle-language label { font-size: .86rem; font-weight: 700; }
+.subtitle-language select {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid #bdc8dc;
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--ink);
+}
+.subtitle-styles {
+    width: min(100%, 410px);
+    min-width: 0;
+    margin: 6px 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+}
+.subtitle-styles legend { padding: 0; font-size: .86rem; font-weight: 700; }
+.subtitle-style-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+.subtitle-style-option label {
+    display: grid;
+    align-content: start;
+    height: 100%;
+    gap: 5px;
+    padding: 4px 4px 6px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    cursor: pointer;
+    text-align: center;
+    font-size: .76rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.subtitle-style-option label:hover, .subtitle-style-option input:checked + label {
+    border-color: var(--accent);
+}
+.subtitle-style-option input:checked + label { background: var(--accent-soft); color: var(--accent-hover); }
+.subtitle-style-option input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subtitle-sample {
+    display: grid;
+    min-height: 48px;
+    aspect-ratio: 16 / 9;
+    place-items: end center;
+    padding: 5px 2px;
+    border-radius: 4px;
+    background:
+        radial-gradient(circle at 75% 27%, #eed9b4 0 6%, transparent 7%),
+        linear-gradient(152deg, transparent 47%, #354c63 48% 70%, transparent 71%),
+        linear-gradient(25deg, #283d4f 31%, #537389 32% 52%, transparent 53%),
+        linear-gradient(#677d9a, #b6b9c6);
+    color: white;
+    font-size: .85rem;
+    font-weight: 400;
+    -webkit-text-stroke: 2px #141a28;
+    paint-order: stroke fill;
+}
+.subtitle-sample--yellow { color: #ffdc4c; font-weight: 750; }
+.subtitle-sample--dark-box { -webkit-text-stroke: 0; }
+.subtitle-sample--dark-box span { padding: 1px 4px; background: #000c; }
+.subtitle-sample--cinema { color: #fff1d6; font: italic 400 .93rem/1.2 Georgia, serif; }
+.subtitle-sample--neon { color: #7ce6f9; font-size: .95rem; font-weight: 800; -webkit-text-stroke-color: #1c2137; }
+.subtitle-sample--studio { color: #171735; font-weight: 750; -webkit-text-stroke: 0; }
+.subtitle-sample--studio span { padding: 1px 4px; background: #c5cfff; }
+.subtitle-styles .errorlist { margin-top: 6px; }
 .errorlist, .notice { color: #9b272b; font-size: .86rem; }
 .errorlist { margin: 0; padding-left: 18px; text-align: left; }
 .notice {

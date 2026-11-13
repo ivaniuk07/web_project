@@ -15,7 +15,7 @@ def validate_upload(video):
         raise ValidationError('Файл порожній.')
     if video.size > settings.MAX_UPLOAD_BYTES:
         maximum = settings.MAX_UPLOAD_BYTES / (1024 * 1024)
-        raise ValidationError(f'Максимальний розмір файлу — {maximum:g} МБ.')
+        raise ValidationError(f'Максимальний розмір файлу — {maximum:g} МіБ.')
 
 
 def inspect_video(path, timeout=None, check_cancel=None):

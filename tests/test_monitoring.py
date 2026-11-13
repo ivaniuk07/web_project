@@ -74,10 +74,10 @@ class WaitingEstimateTests(TestCase):
         self.client.force_login(stranger)
         self.assertEqual(self.client.get(reverse('job_detail', args=[job.pk])).status_code, 404)
 
-    def test_unassigned_estimate_follows_count_and_assignment_tie_break(self):
+    def test_unassigned_estimate_follows_the_worker_predicted_to_finish_first(self):
         self.busy_pair()
         for node, duration in zip(self.nodes, [300, 60]):
             self.job(status='succeeded', node=node, started_at=self.now-timedelta(seconds=500), finished_at=self.now-timedelta(seconds=500-duration))
         WorkerNode.objects.filter(pk=self.nodes[0].pk).update(last_assigned_at=self.now-timedelta(minutes=2))
         WorkerNode.objects.filter(pk=self.nodes[1].pk).update(last_assigned_at=self.now-timedelta(minutes=1))
-        self.assertEqual(self.estimate(self.job(task_token=uuid.uuid4()))['seconds'], 300)
+        self.assertEqual(self.estimate(self.job(task_token=uuid.uuid4()))['seconds'], 60)

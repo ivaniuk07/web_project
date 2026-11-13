@@ -11,19 +11,29 @@ from django.utils import timezone
 
 from .models import Job
 from .processing import ProcessingBudget, ProcessingCancelled, ProcessingError, burn_subtitles, generate_subtitles
+from .languages import SubtitleLanguage
+from .subtitle_styles import SubtitleStyle
 from .validation import inspect_video, validate_upload
 
 logger = logging.getLogger(__name__)
+WAITING_FOR_NODE = 'Очікування доступного вузла'
 
 
-def create_job(owner, video):
+def create_job(owner, video, *, subtitle_style=SubtitleStyle.CLASSIC, subtitle_language=SubtitleLanguage.AUTO, enqueue=False):
     validate_upload(video)
-    job = Job(owner=owner, original_name=Path(video.name).name)
+    job = Job(
+        owner=owner, original_name=Path(video.name).name,
+        subtitle_style=subtitle_style, subtitle_language=subtitle_language,
+    )
+    if enqueue:
+        job.task_token = uuid.uuid4()
+        job.stage = WAITING_FOR_NODE
     job.source.save(video.name, video, save=False)
     try:
         duration = inspect_video(Path(job.source.path))
         if duration > settings.MAX_VIDEO_SECONDS:
             raise ValidationError(f'Максимальна тривалість відео — {settings.MAX_VIDEO_SECONDS} с.')
+        job.duration_seconds = duration
         with transaction.atomic():
             get_user_model().objects.select_for_update().get(pk=owner.pk)
             _check_capacity(owner)
@@ -56,7 +66,7 @@ def enqueue_job(job):
             _check_capacity(job.owner, exclude_job=job.pk)
         job.status = Job.Status.QUEUED
         job.task_token = uuid.uuid4()
-        job.stage = 'Очікування доступного вузла'
+        job.stage = WAITING_FOR_NODE
         job.error = ''
         job.node = None
         job.node_name = ''
@@ -123,12 +133,14 @@ def process_job(job, token=None, node_name=''):
         duration = inspect_video(Path(job.source.path), timeout=budget.remaining(settings.MEDIA_PROBE_TIMEOUT), check_cancel=check_cancel)
         if duration > settings.MAX_VIDEO_SECONDS:
             raise ProcessingError(f'Максимальна тривалість відео — {settings.MAX_VIDEO_SECONDS} с.')
+        if job.duration_seconds is None:
+            active.update(duration_seconds=duration)
         if not captions.is_file():
-            generate_subtitles(Path(job.source.path), captions, budget=budget)
+            generate_subtitles(Path(job.source.path), captions, budget=budget, language=job.subtitle_language)
         check_cancel()
         if not active.update(subtitles=captions_name, updated_at=timezone.now()):
             raise ProcessingCancelled('Обробку скасовано.')
-        burn_subtitles(Path(job.source.path), captions, output, budget=budget)
+        burn_subtitles(Path(job.source.path), captions, output, budget=budget, subtitle_style=job.subtitle_style)
         budget.remaining(settings.JOB_TIMEOUT_SECONDS)
         if not active.update(status=Job.Status.SUCCEEDED, stage='Готово', result=result_name, error='', finished_at=timezone.now(), updated_at=timezone.now()):
             raise ProcessingCancelled('Обробку скасовано.')

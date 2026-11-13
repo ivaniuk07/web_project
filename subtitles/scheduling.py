@@ -7,11 +7,12 @@ from typing import Protocol
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.utils import timezone
 from kombu import Connection
 
 from .models import Job, WorkerNode
+from .workloads import WorkloadForecast, node_available
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +91,10 @@ class Dispatcher:
         with transaction.atomic():
             # Shared stable lock order serializes multiple dispatcher processes.
             locked_nodes = list(WorkerNode.objects.select_for_update().order_by('pk'))
-            nodes = [node for node in locked_nodes if (
-                node.enabled and node.heartbeat_at is not None
-                and node.heartbeat_at >= now - timedelta(seconds=settings.NODE_TIMEOUT_SECONDS)
-                and (node.unavailable_until is None or node.unavailable_until <= now)
-            )]
+            nodes = [node for node in locked_nodes if node_available(node, now)]
             pending = Job.objects.select_for_update().filter(
                 status=Job.Status.QUEUED, task_token__isnull=False, node__isnull=True,
-            ).order_by('created_at')
+            ).order_by('created_at', 'pk')
             if job_id is not None:
                 pending = pending.filter(pk=job_id)
             job = pending.first()
@@ -115,10 +112,9 @@ class Dispatcher:
                 job.finished_at = now
                 job.save(update_fields=['status', 'error', 'stage', 'task_token', 'finished_at', 'updated_at'])
                 return True
-            loads = dict(Job.objects.filter(
-                status__in=[Job.Status.QUEUED, Job.Status.RUNNING], node__isnull=False,
-            ).values('node_id').annotate(total=Count('pk')).values_list('node_id', 'total'))
-            node = self.balancer.select(nodes, loads)
+            forecast = WorkloadForecast(node.pk for node in nodes)
+            loads = forecast.loads(now, include_queued=True)
+            node = self.balancer.select(nodes, forecast.completion_times(job, loads))
             job.node = node
             job.node_name = node.name
             job.task_token = uuid.uuid4()

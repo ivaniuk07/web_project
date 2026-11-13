@@ -1,14 +1,12 @@
-from pathlib import Path
-
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from .downloads import subtitles_response, video_response
 from .forms import UploadForm
 from .models import Job
 from .monitoring import estimate_wait
@@ -35,7 +33,11 @@ def home(request):
     )
     if request.method == 'POST' and form.is_valid():
         try:
-            job = create_job(request.user, form.cleaned_data['video'])
+            job = create_job(
+                request.user, form.cleaned_data['video'],
+                subtitle_style=form.cleaned_data['subtitle_style'],
+                subtitle_language=form.cleaned_data['subtitle_language'],
+            )
         except ValidationError as exc:
             form.add_error('video', exc)
         else:
@@ -94,26 +96,14 @@ def cancel_job(request, job_id):
 @login_required
 @require_GET
 def download_subtitles(request, job_id):
-    job = _owned_job(request, job_id)
-    if job.status == Job.Status.CANCELLED:
-        raise Http404
-    return _file_response(job.subtitles, True, f'{Path(job.original_name).stem}.srt', 'application/x-subrip')
+    return subtitles_response(_owned_job(request, job_id))
 
 
 @login_required
 @require_GET
 def video_result(request, job_id):
-    job = _owned_job(request, job_id)
-    if job.status != Job.Status.SUCCEEDED:
-        raise Http404
-    return _file_response(job.result, request.GET.get('download') == '1', f'{Path(job.original_name).stem}_subtitled.mp4', 'video/mp4')
-
-
-def _file_response(field, attachment, filename, content_type):
-    if not field:
-        raise Http404
-    try:
-        file = field.open('rb')
-    except (FileNotFoundError, ValueError) as exc:
-        raise Http404 from exc
-    return FileResponse(file, as_attachment=attachment, filename=filename, content_type=content_type)
+    return video_response(
+        _owned_job(request, job_id),
+        attachment=request.GET.get('download') == '1',
+        range_header=request.headers.get('Range') if 'If-Range' not in request.headers else None,
+    )

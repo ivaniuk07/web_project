@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--too-long-video', required=True)
     parser.add_argument('--max-upload-bytes', type=int, default=1024 ** 3)
     parser.add_argument('--pause-for-scaling', action='store_true', help='Pause with a busy pair for the operator to run the separate scaler.')
-    parser.add_argument('--report', default='.superpowers/stage8/rehearsal.json')
+    parser.add_argument('--report', default='.deployment-artifacts/stage8/rehearsal.json')
     args = parser.parse_args()
     private = Path(args.credentials)
     if private.stat().st_mode & 0o077:

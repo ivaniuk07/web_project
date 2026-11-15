@@ -18,10 +18,6 @@ DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,10.211.55.3
 docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f compose.https.yaml up -d --no-build
 ```
 
-Якщо користуєтеся резервним node-3, додавайте також
-`-f compose.coordinator.third.yaml` між основним файлом і HTTPS-overlay та
-запускайте лише потрібні сервіси, як описано в `AUTOSCALING.md`.
-
 Сайт: `https://10.211.55.3:8443/`. Overlay прибирає published port 8000
 вебконтейнера, задає Secure для session/CSRF cookie, HTTPS redirect та
 `SECURE_PROXY_SSL_HEADER`. Origin враховує HTTPS, IP і порт. Caddy переписує

@@ -74,7 +74,7 @@ def main():
     args = parser.parse_args()
     if args.interval < 1:
         parser.error('--interval must be at least 1 second')
-    root = Path(__file__).resolve().parents[1] / '.superpowers'
+    root = Path(__file__).resolve().parents[1] / '.deployment-artifacts'
     root.mkdir(exist_ok=True)
     try:
         with (root / 'autoscale.lock').open('a') as lock:

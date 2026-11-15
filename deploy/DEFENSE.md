@@ -6,14 +6,12 @@
 
 ## Перед показом
 
-1. Запустіть дві VM Parallels: Ubuntu й Kali. Перевірте їхні актуальні IP.
-2. Перевірте NFS на Kali: `findmnt /srv/subtitles/media`.
+1. Запустіть Ubuntu VM і Docker Desktop на Mac. Перевірте їхні актуальні IP.
+2. На Mac перевірте NFS командою `mount | grep subtitles-media`.
 3. Повторіть команди запуску з `MULTI_HOST.md`, `HTTPS.md`. Використовуйте один
    набір Compose-файлів у всіх командах. Модель має бути завантажена до показу.
 4. На A виконайте через web-контейнер `python manage.py capacity_snapshot`.
-   Два базові вузли повинні бути available=true. Резервний node-3 — вимкнений
-   до досліду автозапуску. Якщо він залишився після попереднього показу, дочекайтеся
-   завершення його задач і вручну зупиніть worker3/redis3.
+   Обидва вузли повинні бути available=true.
 5. Відкрийте сайт через HTTPS і підготуйте звичайний та staff-облікові записи.
    Для браузера довіртеся локальному CA за окремою інструкцією. Паролі й приватні
    env-файли на екрані захисту не показуйте.
@@ -39,9 +37,8 @@
 - Запустіть довший ролик, дочекайтеся «Обробляється», скасуйте. Статус залишиться
   в історії, готовий результат скасованої спроби не стане доступним.
 - Запустіть два відео майже одночасно. Покажіть node-1 і node-2 на сторінках,
-  а також журнали воркера кожної VM. Job UUID і Celery task ID — різні значення.
-- За бажання повторіть відключення Kali з `MULTI_HOST.md`: задача має перейти
-  на Ubuntu після втрати heartbeat, а Kali — повернутися після resume.
+  а також журнали воркерів на Ubuntu й Mac. Job UUID і Celery task ID — різні значення.
+- За бажання зупиніть воркер на Mac і покажіть перепризначення задачі після втрати heartbeat.
 
 ## Додаткові бали
 
@@ -51,11 +48,7 @@
 2. В іншому браузері увійдіть staff-користувачем та відкрийте `/operations/`:
    вузли, heartbeat, доступність, running/queued і активні задачі. Звичайному
    користувачеві сторінка повертає 403. Сторінка не показує паролів брокерів.
-3. Покажіть cap=2, dry-run і apply автозапуску за командами `AUTOSCALING.md`.
-   Дочекайтеся heartbeat node-3. Подайте нову задачу й покажіть обробку node-3.
-   Однаковий код, окремий Redis, реєстр змінюється конфігурацією. Третій контейнер
-   на Ubuntu ділить її CPU, а дві основні VM залишаються окремими машинами.
-4. Покажіть HTTPS, верифікований сертифікат і Secure cookie. Без локального CA
+3. Покажіть HTTPS, верифікований сертифікат і Secure cookie. Без локального CA
    браузер попереджає про недовіру; для тесту використовується `--cacert`, а не -k.
 
 ## Коротке усне пояснення
@@ -87,11 +80,11 @@ SOLID: окремі відповідальності HTTP/станів/бала�
 {"username":"YOUR_DEMO_OPERATOR","password":"YOUR_PRIVATE_PASSWORD"}
 ```
 
-Не зберігайте справжні дані у Git. На Mac використовуйте `.superpowers/` або іншу
+Не зберігайте справжні дані у Git. На Mac використовуйте `.deployment-artifacts/` або іншу
 ігноровану приватну папку. Параметри:
 
 ```sh
-python3 deploy/rehearse.py --url https://10.211.55.3:8443 --ca /private/path/root-ca.crt --credentials /private/path/operator.json --video /private/path/short.mp4 --long-video /private/path/long.mp4 --too-long-video /private/path/over-60-minutes.mp4 --pause-for-scaling --report .superpowers/rehearsal.json
+python3 deploy/rehearse.py --url https://10.211.55.3:8443 --ca /private/path/root-ca.crt --credentials /private/path/operator.json --video /private/path/short.mp4 --long-video /private/path/long.mp4 --too-long-video /private/path/over-60-minutes.mp4 --pause-for-scaling --report .deployment-artifacts/rehearsal.json
 ```
 
 Ролик long має вкладатися у ліміти, але оброблятися досить довго для перевірки

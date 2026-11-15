@@ -1,39 +1,26 @@
-# Етап 7: два окремі хости
+# Розгортання на Ubuntu VM та Mac
 
-Перевірена конфігурація: дві ARM64 VM у Parallels Desktop. Ubuntu — координатор
-(10.211.55.3), Kali — другий обчислювальний вузол (10.211.55.5).
-Обидва воркери запускають той самий образ `subtitle-studio:local`.
-Ці адреси залежать від мережі VM. Для іншого середовища замініть їх у всіх налаштуваннях.
-
-| Хост | Сервіси | Мережевий доступ |
+| Хост | Сервіси | Приклад IP у мережі Parallels |
 | --- | --- | --- |
-| A, Ubuntu | Django, dispatcher, PostgreSQL, Redis 1, worker node-1, NFS | 8000 HTTP, 5432 PostgreSQL, 6379 Redis 1, 2049 NFS |
-| B, Kali | Redis 2, worker node-2, NFS-клієнт | 6379 Redis 2 |
+| A, Ubuntu VM | Django, диспетчер, PostgreSQL, Redis 1, node-1, NFS і Caddy | `10.211.55.3` |
+| B, Mac | Redis 2 і node-2 у Docker Desktop | `10.211.55.2` |
 
-PostgreSQL зберігає задачі, навантаження та heartbeat. Dispatcher обирає вузол,
-маршрутизатор відправляє повідомлення в його Redis, Celery читає власну чергу.
-На обох вузлах `/app/media` посилається на одну папку NFS. Передаються
-ідентифікатор задачі, шлях файлу й токен спроби. Відео через Redis не передається.
+У Redis передаються UUID завдання, шлях до файлу й токен спроби.
+Вебконтейнер та обидва воркери бачать спільні файли в `/app/media`.
+Використовуйте на обох хостах одну версію коду й актуальні IP-адреси.
 
 ## Підготовка
 
-Потрібні Linux, Docker Engine з Compose v2, спільна приватна мережа,
-NFS-сервер на A та NFS-клієнт на B. Для Ubuntu пакети:
+На Ubuntu потрібні Docker Engine, Compose v2 і NFS-сервер:
 
 ```sh
-sudo apt-get update
-sudo apt-get install docker.io docker-compose-v2 nfs-kernel-server nfs-common
-sudo systemctl enable --now docker
+sudo apt-get install docker.io docker-compose-v2 nfs-kernel-server
+sudo systemctl enable --now docker nfs-kernel-server
 ```
 
-Для Kali назва пакета Compose — `docker-compose`, NFS-сервер на B не потрібний.
-У командах нижче `sudo` потрібний лише без налаштованого доступу до Docker.
-На обох хостах розмістіть однакову версію проєкту, наприклад `/opt/subtitles-project`.
-
-Ця конфігурація призначена для навчальної демонстрації у приватній мережі.
-Обмежте мережевими правилами PostgreSQL і Redis потрібними хостами, NFS — лише B.
-Сервіси прив'язуються до `PRIVATE_BIND_IP`. HTTP використовує Django runserver.
-Перед публічним розгортанням потрібні окремі налаштування вебсервера, TLS і мережевого захисту.
+На Mac запустіть Docker Desktop. Сервіси прив'язуються до `PRIVATE_BIND_IP`.
+У приватній мережі Mac потрібен доступ до PostgreSQL і NFS на Ubuntu,
+а Ubuntu потрібен доступ до Redis другого вузла на Mac.
 
 ## Одне спільне сховище
 
@@ -48,7 +35,7 @@ sudo mkdir -p /etc/exports.d
 Запишіть у `/etc/exports.d/subtitles.exports`, замінивши адресу B:
 
 ```text
-/srv/subtitles/media 10.211.55.5(rw,sync,no_subtree_check,root_squash)
+/srv/subtitles/media 10.211.55.2(rw,sync,no_subtree_check,root_squash)
 ```
 
 ```sh
@@ -56,23 +43,16 @@ sudo exportfs -ra
 sudo systemctl enable --now nfs-kernel-server
 ```
 
-На B:
+На Mac:
 
 ```sh
-sudo mkdir -p /srv/subtitles/media
-sudo mount -t nfs -o vers=4,proto=tcp 10.211.55.3:/srv/subtitles/media /srv/subtitles/media
-findmnt /srv/subtitles/media
+mkdir -p "$HOME/subtitles-media"
+sudo mount -t nfs -o vers=4,tcp,resvport 10.211.55.3:/srv/subtitles/media "$HOME/subtitles-media"
+mount | grep subtitles-media
 ```
 
-Для збереження після перезапуску додайте до `/etc/fstab` на B один рядок:
-
-```text
-10.211.55.3:/srv/subtitles/media /srv/subtitles/media nfs defaults,vers=4,_netdev,nofail,x-systemd.automount 0 0
-```
-
-Після зміни виконайте `sudo systemctl daemon-reload`.
-Звичайна локальна папка на B не замінює спільне сховище. Воркер B перед стартом
-перевіряє наявність маркера, створеного координатором.
+У `.env.worker` вкажіть абсолютний шлях до цієї папки в `SHARED_MEDIA_PATH`.
+Воркер перевіряє доступ до спільних файлів і маркер координатора під час запуску.
 
 ## Налаштування та однаковий код
 
@@ -98,20 +78,6 @@ PostgreSQL має однакові DB/user/password на обох хостах. 
 `DJANGO_ALLOWED_HOSTS` на A містить адресу, через яку відкриваєте сайт.
 Справжні `.env.*` виключені з Git і Docker build context.
 
-На A зберіть образ і перенесіть його на B. Для різних архітектур CPU збирайте
-однаковий вихідний код окремо на кожній архітектурі.
-
-```sh
-sudo docker build -t subtitle-studio:local .
-sudo docker save -o /tmp/subtitle-studio.tar subtitle-studio:local
-```
-
-Перенесіть архів звичним способом на B, потім:
-
-```sh
-sudo docker load -i /tmp/subtitle-studio.tar
-```
-
 В обох env залиште `WHISPER_MODEL=tiny` для завантаження моделі через інтернет.
 Для автономної демонстрації можна один раз розмістити завантажену модель у
 `/srv/subtitles/media/.models/tiny` і задати на обох хостах
@@ -125,44 +91,22 @@ sudo docker load -i /tmp/subtitle-studio.tar
 
 ## Порядок запуску
 
-На B спочатку запустіть лише Redis:
+Скористайтеся [командами в README](../README.md#запуск-на-ubuntu-vm-та-mac).
+На Mac спочатку запустіть Redis. На Ubuntu запустіть координатор і запишіть маркер
+спільного сховища. Потім запустіть воркер на Mac і перевірте журнал.
+У «Стані системи» на `/operations/` обидва вузли мають бути доступні.
 
-```sh
-sudo docker compose --env-file .env.worker -f compose.worker.yaml up -d redis
-```
-
-На A:
-
-```sh
-sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml up -d --no-build
-sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml exec -T web python manage.py check_deployment --all-brokers --write-marker coordinator
-```
-
-Потім на B:
-
-```sh
-sudo docker compose --env-file .env.worker -f compose.worker.yaml up -d --no-build worker
-sudo docker compose --env-file .env.worker -f compose.worker.yaml exec -T worker python manage.py check_deployment --all-brokers --read-marker coordinator
-```
-
-Обидві перевірки мають показати однакові `marker.nonce`, `marker_sha256` та базу
-`subtitles`. Вони реально підключаються до PostgreSQL та Redis і перевіряють
-читання й запис медіа. Паролі у звіт не виводяться.
-Відкрийте `http://10.211.55.3:8000/` та зареєструйте користувача.
-Це окрема база демонстраційного розгортання, зі своєю історією задач.
-
-Для порівняння файлів завершеної задачі виконайте на A (сервіс `web`) і B
-(сервіс `worker`) команду `python manage.py check_deployment --job UUID` через
-`docker compose ... exec -T`. Значення SHA-256 для source, subtitles та video
-мають збігатися. UUID видно в адресі сторінки задачі.
+Для перевірки однакових файлів виконайте `python manage.py check_deployment --job UUID`
+через `exec -T web` на Ubuntu та `exec -T worker` на Mac.
+Значення SHA-256 для source, subtitles та video мають збігатися.
 
 ## Відключення та повернення вузла
 
 Завантажте два короткі відео майже одночасно. У сторінках задач перевірте `node-1`
 та `node-2`, а в `docker compose ... logs worker` — прийняття й завершення задач.
-Для перевірки збою можна призупинити VM B у Parallels, залишивши A працювати.
+Для перевірки збою можна зупинити сервіс worker на Mac, залишивши Ubuntu працювати.
 Після `NODE_TIMEOUT_SECONDS` (20 с за замовчуванням) dispatcher перестає обирати B
-і може перепризначити його незавершені задачі на A. Після відновлення VM heartbeat
+і може перепризначити його незавершені задачі на A. Після повторного запуску воркера heartbeat
 оновлюється, і вузол знову бере участь у балансуванні.
 
 Відновлення починає нову спробу з новим токеном, а проміжний прогрес Whisper
@@ -175,7 +119,7 @@ sudo docker compose --env-file .env.worker -f compose.worker.yaml exec -T worker
 
 PostgreSQL, dispatcher і NFS розміщені на A. Збій усього хоста A зупиняє сервіс.
 Реплікація цих компонентів не входить до цього етапу.
-Після перезапуску VM перевірте NFS і повторіть команди `up -d --no-build`.
+Після перезапуску перевірте монтування NFS і повторіть команди запуску.
 Не використовуйте `down -v`, якщо потрібно зберегти базу та черги.
 
 Точні ідентифікатори та результати перевірки наведені в `STAGE7_EVIDENCE.md`.

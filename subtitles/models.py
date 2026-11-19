@@ -27,6 +27,7 @@ class WorkerNode(models.Model):
 
 class Job(models.Model):
     class Status(models.TextChoices):
+        UPLOADED = 'uploaded', 'Завантажено'
         QUEUED = 'queued', 'Очікує обробки'
         RUNNING = 'running', 'Обробляється'
         SUCCEEDED = 'succeeded', 'Завершено'
@@ -42,7 +43,7 @@ class Job(models.Model):
     subtitle_style = models.CharField(max_length=16, choices=SubtitleStyle.choices, default=SubtitleStyle.CLASSIC)
     subtitle_language = models.CharField(max_length=2, choices=SubtitleLanguage.choices, blank=True, default=SubtitleLanguage.AUTO)
     result = models.FileField(upload_to='rendered/', blank=True, max_length=512)
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.UPLOADED)
     node_name = models.CharField(max_length=100, blank=True)
     task_token = models.UUIDField(null=True, blank=True)
     stage = models.CharField(max_length=100, default='Очікує запуску')

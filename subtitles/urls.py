@@ -1,8 +1,8 @@
 from django.urls import path
-from . import views, operations
+from . import views
 
 urlpatterns = [
-    path('operations/', operations.overview, name='operations'),
+    path('operations/', views.system_status, name='operations'),
     path('', views.home, name='home'),
     path('history/', views.job_history, name='job_history'),
     path('jobs/<uuid:job_id>/', views.job_detail, name='job_detail'),

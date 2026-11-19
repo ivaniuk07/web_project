@@ -17,7 +17,7 @@ class OperationsTests(TestCase):
         self.node = WorkerNode.objects.create(name='node-1', broker_url='redis://:PRIVATE_BROKER_PASSWORD@redis:6379/0', heartbeat_at=timezone.now())
         self.job = Job.objects.create(owner=self.user, source='videos/operations.mp4', original_name='operations.mp4', node=self.node, status='running', task_token=uuid.uuid4())
         Job.objects.create(owner=self.user, source='videos/not-submitted.mp4', original_name='not submitted')
-        Job.objects.create(owner=self.user, source='videos/waiting.mp4', original_name='waiting', task_token=uuid.uuid4())
+        Job.objects.create(owner=self.user, source='videos/waiting.mp4', original_name='waiting', status=Job.Status.QUEUED, task_token=uuid.uuid4())
 
     def test_anonymous_redirects_and_nonstaff_is_forbidden(self):
         self.assertEqual(self.client.get('/operations/').status_code, 302)

@@ -2,15 +2,15 @@ from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .downloads import subtitles_response, video_response
 from .forms import UploadForm
 from .models import Job
-from .monitoring import estimate_wait
-from .services import create_job, enqueue_job, cancel_job as cancel_job_service
+from .balancing import get_system_status, estimate_wait_time
+from .jobs import create_job, queue_job, cancel_job as cancel_job_service
 
 
 @require_http_methods(['GET', 'POST'])
@@ -59,28 +59,28 @@ def job_history(request):
     })
 
 
-def _owned_job(request, job_id):
+def get_user_job(request, job_id):
     return get_object_or_404(Job, pk=job_id, owner=request.user)
 
 
 @login_required
 @require_GET
 def job_detail(request, job_id):
-    job = _owned_job(request, job_id)
+    job = get_user_job(request, job_id)
     return render(request, 'subtitles/detail.html', {
         'job': job,
-        'waiting_estimate': estimate_wait(job),
-        'can_process': job.status == Job.Status.FAILED or (job.status == Job.Status.QUEUED and not job.task_token),
-        'can_cancel': job.status in [Job.Status.QUEUED, Job.Status.RUNNING],
+        'waiting_estimate': estimate_wait_time(job),
+        'can_process': job.status in [Job.Status.UPLOADED, Job.Status.FAILED],
+        'can_cancel': job.status in [Job.Status.UPLOADED, Job.Status.QUEUED, Job.Status.RUNNING],
     })
 
 
 @login_required
 @require_POST
 def process_video(request, job_id):
-    job = _owned_job(request, job_id)
+    job = get_user_job(request, job_id)
     try:
-        enqueue_job(job)
+        queue_job(job)
     except ValidationError as exc:
         messages.error(request, ' '.join(exc.messages))
     return redirect('job_detail', job_id=job_id)
@@ -89,21 +89,34 @@ def process_video(request, job_id):
 @login_required
 @require_POST
 def cancel_job(request, job_id):
-    cancel_job_service(_owned_job(request, job_id))
+    cancel_job_service(get_user_job(request, job_id))
     return redirect('job_detail', job_id=job_id)
 
 
 @login_required
 @require_GET
 def download_subtitles(request, job_id):
-    return subtitles_response(_owned_job(request, job_id))
+    return subtitles_response(get_user_job(request, job_id))
 
 
 @login_required
 @require_GET
 def video_result(request, job_id):
     return video_response(
-        _owned_job(request, job_id),
+        get_user_job(request, job_id),
         attachment=request.GET.get('download') == '1',
         range_header=request.headers.get('Range') if 'If-Range' not in request.headers else None,
     )
+
+
+@login_required
+@require_GET
+def system_status(request):
+    if not request.user.is_active or not request.user.is_staff:
+        raise PermissionDenied
+    active = Job.objects.filter(status__in=[Job.Status.UPLOADED, Job.Status.QUEUED, Job.Status.RUNNING])
+    return render(request, 'subtitles/operations.html', {
+        'snapshot': get_system_status(),
+        'active_total': active.count(),
+        'active_jobs': active.select_related('owner').order_by('-created_at')[:100],
+    })

@@ -2,7 +2,7 @@
 {% block title %}{{ job.original_name }} — Титри.{% endblock %}
 {% block breadcrumb %}Завдання{% endblock %}
 {% block head %}
-{% if job.status == 'running' or job.status == 'queued' and job.task_token %}<meta http-equiv="refresh" content="3">{% endif %}
+{% if job.status == 'running' or job.status == 'queued' %}<meta http-equiv="refresh" content="3">{% endif %}
 {% endblock %}
 {% block content %}
 <a class="back-link" href="{% url 'job_history' %}">

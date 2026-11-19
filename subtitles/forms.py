@@ -3,7 +3,7 @@ from django.conf import settings
 
 from .languages import SubtitleLanguage
 from .subtitle_styles import SubtitleStyle
-from .validation import validate_upload
+from .processing import validate_video_upload
 
 
 class UploadForm(forms.Form):
@@ -38,7 +38,7 @@ class UploadForm(forms.Form):
 
     def clean_video(self):
         video = self.cleaned_data['video']
-        validate_upload(video)
+        validate_video_upload(video)
         return video
 
     def clean_subtitle_style(self):

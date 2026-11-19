@@ -17,22 +17,12 @@ def video_response(job, *, attachment, range_header=None):
         raise Http404
     response = _file_response(job.result, attachment, f'{Path(job.original_name).stem}_subtitled.mp4', 'video/mp4')
     response['Accept-Ranges'] = 'bytes'
-    match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', range_header or '', flags=re.IGNORECASE)
-    if not match or not any(match.groups()):
-        return response
-
     size = int(response['Content-Length'])
-    first, last = match.groups()
-    try:
-        if first:
-            start = int(first)
-            end = min(int(last), size - 1) if last else size - 1
-        else:
-            start = max(size - int(last), 0)
-            end = size - 1
-    except ValueError:
+    byte_range = _parse_byte_range(range_header, size)
+    if byte_range is None:
         return response
 
+    start, end = byte_range
     if start > end:
         response.close()
         return HttpResponse(status=416, headers={
@@ -52,10 +42,33 @@ def video_response(job, *, attachment, range_header=None):
     return response
 
 
-def _read_range(file, remaining, block_size):
-    while remaining and (chunk := file.read(min(block_size, remaining))):
+def _parse_byte_range(header, size):
+    match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', header or '', flags=re.IGNORECASE)
+    if match is None:
+        return None
+    first, last = match.groups()
+    if not first and not last:
+        return None
+
+    last_byte = size - 1
+    try:
+        if not first:
+            return max(size - int(last), 0), last_byte
+        start = int(first)
+        end = min(int(last), last_byte) if last else last_byte
+        return start, end
+    except ValueError:
+        return None
+
+
+def _read_range(file, remaining_bytes, block_size):
+    while remaining_bytes > 0:
+        bytes_to_read = min(block_size, remaining_bytes)
+        chunk = file.read(bytes_to_read)
+        if not chunk:
+            break
         yield chunk
-        remaining -= len(chunk)
+        remaining_bytes -= len(chunk)
 
 
 def _file_response(field, attachment, filename, content_type):

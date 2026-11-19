@@ -6,7 +6,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from subtitles.models import Job, WorkerNode
-from subtitles.scheduling import Dispatcher
+from subtitles.dispatcher import Dispatcher
 
 
 class SchedulingTests(TestCase):
@@ -19,12 +19,13 @@ class SchedulingTests(TestCase):
 
     def job(self, **values):
         import uuid
+        values.setdefault('status', Job.Status.QUEUED)
         return Job.objects.create(owner=self.user, source='videos/' + str(uuid.uuid4()) + '.mp4', original_name='clip.mp4', task_token=uuid.uuid4(), **values)
 
     def test_jobs_choose_different_nodes_and_store_route(self):
         a, b = self.job(), self.job()
-        self.dispatcher.dispatch_once()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
+        self.dispatcher.dispatch_next_job()
         a.refresh_from_db(); b.refresh_from_db()
         self.assertEqual(a.node, self.first)
         self.assertEqual(b.node, self.second)
@@ -35,7 +36,7 @@ class SchedulingTests(TestCase):
         self.first.last_assigned_at = timezone.now()
         self.first.save()
         job = self.job()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         self.assertEqual(job.node, self.second)
 
@@ -45,7 +46,7 @@ class SchedulingTests(TestCase):
             self.job(node=self.second, duration_seconds=20)
         target = self.job(duration_seconds=30)
 
-        self.dispatcher.dispatch_once(job_id=target.pk)
+        self.dispatcher.dispatch_next_job(job_id=target.pk)
 
         target.refresh_from_db()
         self.assertEqual(target.node, self.second)
@@ -58,7 +59,7 @@ class SchedulingTests(TestCase):
         self.job(node=self.first, duration_seconds=20)
         target = self.job(duration_seconds=60)
 
-        self.dispatcher.dispatch_once(job_id=target.pk)
+        self.dispatcher.dispatch_next_job(job_id=target.pk)
 
         target.refresh_from_db()
         self.assertEqual(target.node, self.first)
@@ -66,7 +67,7 @@ class SchedulingTests(TestCase):
     def test_no_nodes_keeps_job_waiting(self):
         WorkerNode.objects.update(heartbeat_at=None)
         job = self.job()
-        self.assertFalse(self.dispatcher.dispatch_once())
+        self.assertFalse(self.dispatcher.dispatch_next_job())
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.QUEUED)
         self.assertIsNone(job.node_id)
@@ -76,8 +77,8 @@ class SchedulingTests(TestCase):
         self.router.publish.side_effect = [ConnectionError('offline'), None]
         job = self.job()
         old_token = job.task_token
-        self.dispatcher.dispatch_once()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.QUEUED)
         self.assertEqual(job.node, self.second)
@@ -86,13 +87,13 @@ class SchedulingTests(TestCase):
 
     def test_stale_node_reassigns_running_job_and_invalidates_message(self):
         job = self.job()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         old_token = job.task_token
         Job.objects.filter(pk=job.pk).update(status=Job.Status.RUNNING)
         WorkerNode.objects.filter(pk=self.first.pk).update(heartbeat_at=timezone.now() - timedelta(hours=1))
-        self.dispatcher.recover()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.requeue_stalled_jobs()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         self.assertEqual(job.node, self.second)
         self.assertNotEqual(job.task_token, old_token)
@@ -102,23 +103,23 @@ class SchedulingTests(TestCase):
         self.second.enabled = False; self.second.save()
         third = WorkerNode.objects.create(name='node-3', broker_url='redis://localhost:6381/0', heartbeat_at=timezone.now())
         job = self.job()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         self.assertEqual(job.node, third)
 
     def test_published_backlog_is_not_resubmitted(self):
         job = self.job()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         Job.objects.filter(pk=job.pk).update(dispatched_at=timezone.now() - timedelta(hours=1))
-        self.dispatcher.recover()
-        self.assertFalse(self.dispatcher.dispatch_once())
+        self.dispatcher.requeue_stalled_jobs()
+        self.assertFalse(self.dispatcher.dispatch_next_job())
         self.assertEqual(self.router.publish.call_count, 1)
 
     @override_settings(MAX_DISPATCH_ATTEMPTS=1)
     def test_retries_are_bounded(self):
         job = self.job()
         Job.objects.filter(pk=job.pk).update(dispatch_attempts=1)
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.FAILED)
         self.assertIsNone(job.task_token)
@@ -128,7 +129,7 @@ class SchedulingTests(TestCase):
         job = self.job()
         Job.objects.filter(pk=job.pk).update(node=self.first, dispatched_at=timezone.now() - timedelta(minutes=1))
         old_token = job.task_token
-        self.dispatcher.recover()
+        self.dispatcher.requeue_stalled_jobs()
         job.refresh_from_db()
         self.assertIsNone(job.node_id)
         self.assertNotEqual(old_token, job.task_token)
@@ -137,7 +138,7 @@ class SchedulingTests(TestCase):
         job = self.job()
         Job.objects.filter(pk=job.pk).update(status=Job.Status.CANCELLED, node=self.first)
         WorkerNode.objects.filter(pk=self.first.pk).update(enabled=False)
-        self.dispatcher.recover()
+        self.dispatcher.requeue_stalled_jobs()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.CANCELLED)
 
@@ -145,17 +146,17 @@ class SchedulingTests(TestCase):
     @override_settings(JOB_TIMEOUT_SECONDS=7200)
     def test_stale_running_child_recovers_with_live_parent(self):
         job = self.job()
-        self.dispatcher.dispatch_once()
+        self.dispatcher.dispatch_next_job()
         job.refresh_from_db()
         old_token = job.task_token
         Job.objects.filter(pk=job.pk).update(status=Job.Status.RUNNING, updated_at=timezone.now() - timedelta(hours=1))
-        self.dispatcher.recover()
+        self.dispatcher.requeue_stalled_jobs()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.RUNNING)
         self.assertEqual(job.task_token, old_token)
 
         Job.objects.filter(pk=job.pk).update(updated_at=timezone.now() - timedelta(hours=3))
-        self.dispatcher.recover()
+        self.dispatcher.requeue_stalled_jobs()
         job.refresh_from_db()
         self.assertEqual(job.status, Job.Status.QUEUED)
         self.assertNotEqual(job.task_token, old_token)
@@ -164,22 +165,22 @@ class SchedulingTests(TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
-        from subtitles.services import process_job
+        from subtitles.jobs import process_job
         with tempfile.TemporaryDirectory() as root, override_settings(MEDIA_ROOT=root):
             job = self.job()
             source = Path(job.source.path)
             source.parent.mkdir(parents=True)
             source.write_bytes(b'video')
-            self.dispatcher.dispatch_once()
+            self.dispatcher.dispatch_next_job()
             job.refresh_from_db()
             def generate(source, destination, **kwargs):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text('captions', encoding='utf-8')
             def burn(source, captions, destination, **kwargs):
                 WorkerNode.objects.filter(pk=self.first.pk).update(heartbeat_at=None)
-                self.dispatcher.recover()
-                self.dispatcher.dispatch_once()
-            with patch('subtitles.services.inspect_video', return_value=5), patch('subtitles.services.generate_subtitles', side_effect=generate), patch('subtitles.services.burn_subtitles', side_effect=burn):
+                self.dispatcher.requeue_stalled_jobs()
+                self.dispatcher.dispatch_next_job()
+            with patch('subtitles.jobs.get_video_duration', return_value=5), patch('subtitles.jobs.generate_subtitles', side_effect=generate), patch('subtitles.jobs.burn_subtitles', side_effect=burn):
                 process_job(job, token=job.task_token)
             job.refresh_from_db()
             self.assertEqual(job.status, Job.Status.QUEUED)
@@ -189,13 +190,13 @@ class SchedulingTests(TestCase):
 
     def test_invalid_configuration_does_not_partially_update_registry(self):
         from django.core.exceptions import ImproperlyConfigured
-        from subtitles.scheduling import sync_nodes
+        from subtitles.dispatcher import sync_worker_nodes
         configs = [
             {'name': 'node-1', 'broker_url': 'redis://changed:6379/0', 'queue': 'same'},
             {'name': 'node-2', 'broker_url': 'redis://changed:6379/0', 'queue': 'same'},
         ]
         with override_settings(WORKER_NODES=configs), self.assertRaises(ImproperlyConfigured):
-            sync_nodes()
+            sync_worker_nodes()
         self.first.refresh_from_db()
         self.assertEqual(self.first.broker_url, 'redis://localhost:6379/0')
 
@@ -213,13 +214,13 @@ class ConcurrentDispatchTests(TransactionTestCase):
         for name in ('node-1', 'node-2'):
             WorkerNode.objects.create(name=name, broker_url='redis://localhost:6379/0', heartbeat_at=timezone.now())
         for number in range(2):
-            Job.objects.create(owner=user, source=f'videos/{number}.mp4', original_name='clip.mp4', task_token=uuid.uuid4())
+            Job.objects.create(owner=user, source=f'videos/{number}.mp4', original_name='clip.mp4', status=Job.Status.QUEUED, task_token=uuid.uuid4())
         barrier = Barrier(2)
         def dispatch(_):
             close_old_connections()
             try:
                 barrier.wait(timeout=5)
-                return Dispatcher(router=Mock()).dispatch_once()
+                return Dispatcher(router=Mock()).dispatch_next_job()
             finally:
                 close_old_connections()
         with ThreadPoolExecutor(max_workers=2) as pool:

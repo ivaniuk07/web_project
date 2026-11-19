@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase
-from subtitles.processing import ProcessingError, Segment, generate_subtitles, render_srt
+from subtitles.processing import ProcessingError, Segment, generate_subtitles, build_srt
 
 
 class ProcessingTests(SimpleTestCase):
@@ -30,7 +30,7 @@ class ProcessingTests(SimpleTestCase):
                 self.assertEqual(model.transcribe.call_count, 2)
                 self.assertEqual(model.transcribe.call_args.kwargs['language'], language)
 
-    @patch('subtitles.processing._run')
+    @patch('subtitles.processing.run_command')
     @patch('subtitles.processing.extract_audio')
     def test_whisper_receives_language_only_when_selected(self, extract, run):
         run.return_value.stdout = '[{"start": 0, "end": 1, "text": "Привіт!"}]'
@@ -42,12 +42,12 @@ class ProcessingTests(SimpleTestCase):
             self.assertEqual(run.call_args.args[0][-2:], ['--language', 'uk'])
 
     def test_srt_timestamps_and_unicode(self):
-        result = render_srt([Segment(0, 1.9996, 'Привіт!')])
+        result = build_srt([Segment(0, 1.9996, 'Привіт!')])
         self.assertEqual(result, '1\n00:00:00,000 --> 00:00:02,000\nПривіт!\n\n')
 
     def test_invalid_timestamps_are_rejected(self):
         with self.assertRaises(ProcessingError):
-            render_srt([Segment(2, 1, 'bad')])
+            build_srt([Segment(2, 1, 'bad')])
 
     @patch('subtitles.processing.extract_audio')
     def test_generates_utf8_file(self, extract):
@@ -72,7 +72,7 @@ class ProcessingTests(SimpleTestCase):
             source, captions, output = [Path(root) / name for name in ('source.mp4', 'captions.srt', 'result.mp4')]
             captions.write_text('test', encoding='utf-8')
             output.write_bytes(b'previous-result')
-            with patch('subtitles.processing._run', side_effect=ProcessingError('render failed')):
+            with patch('subtitles.processing.run_command', side_effect=ProcessingError('render failed')):
                 with self.assertRaises(ProcessingError):
                     burn_subtitles(source, captions, output)
             self.assertEqual(output.read_bytes(), b'previous-result')
@@ -86,7 +86,7 @@ class ProcessingTests(SimpleTestCase):
                 self.assertEqual(command[command.index('-vf') + 1], 'subtitles=filename=captions.srt,pad=ceil(iw/2)*2:ceil(ih/2)*2')
                 self.assertIn('+faststart', command)
                 Path(command[-1]).write_bytes(b'mp4')
-            with patch('subtitles.processing._run', side_effect=encode):
+            with patch('subtitles.processing.run_command', side_effect=encode):
                 burn_subtitles(source, captions, output)
             self.assertEqual(output.read_bytes(), b'mp4')
 
@@ -109,7 +109,7 @@ class ProcessingTests(SimpleTestCase):
                         self.assertIn(setting, command[command.index('-vf') + 1])
                         Path(command[-1]).write_bytes(b'mp4')
 
-                    with patch('subtitles.processing._run', side_effect=encode):
+                    with patch('subtitles.processing.run_command', side_effect=encode):
                         burn_subtitles(source, captions, output, subtitle_style=style)
             self.assertEqual(captions.read_text(encoding='utf-8'), srt)
 
@@ -117,7 +117,7 @@ class ProcessingTests(SimpleTestCase):
         import subprocess
         import sys
         import time
-        from subtitles.processing import ProcessingCancelled, _run
+        from subtitles.processing import ProcessingCancelled, run_command
         started = time.monotonic()
         processes = []
         original = subprocess.Popen
@@ -130,6 +130,6 @@ class ProcessingTests(SimpleTestCase):
                 raise ProcessingCancelled('cancelled')
         with patch('subtitles.processing.subprocess.Popen', side_effect=spawn):
             with self.assertRaises(ProcessingCancelled):
-                _run([sys.executable, '-c', 'import time; time.sleep(5)'], 10, check_cancel=cancel)
+                run_command([sys.executable, '-c', 'import time; time.sleep(5)'], 10, check_cancel=cancel)
         self.assertLess(time.monotonic() - started, 2)
         self.assertIsNotNone(processes[0].poll())

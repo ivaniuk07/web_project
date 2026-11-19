@@ -7,7 +7,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from subtitles.models import Job, WorkerNode
-from subtitles.services import enqueue_job, cancel_job, process_job
+from subtitles.jobs import queue_job, cancel_job, process_job
 
 
 class AsyncJobTests(TestCase):
@@ -45,11 +45,11 @@ class AsyncJobTests(TestCase):
     @patch('subtitles.tasks.process_video_task.apply_async')
     def test_cancelled_queued_message_does_not_execute(self, publish):
         from subtitles.tasks import process_video_task
-        enqueue_job(self.job)
+        queue_job(self.job)
         self.job.refresh_from_db()
         token = str(self.job.task_token)
         cancel_job(self.job)
-        with patch('subtitles.services.generate_subtitles') as generate:
+        with patch('subtitles.jobs.generate_subtitles') as generate:
             process_video_task.run(str(self.job.pk), self.job.source.name, token)
         generate.assert_not_called()
         self.job.refresh_from_db()
@@ -60,7 +60,7 @@ class AsyncJobTests(TestCase):
             cancel_job(self.job)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('captions', encoding='utf-8')
-        with patch('subtitles.services.inspect_video', return_value=5), patch('subtitles.services.generate_subtitles', side_effect=generate), patch('subtitles.services.burn_subtitles') as burn:
+        with patch('subtitles.jobs.get_video_duration', return_value=5), patch('subtitles.jobs.generate_subtitles', side_effect=generate), patch('subtitles.jobs.burn_subtitles') as burn:
             process_job(self.job)
         burn.assert_not_called()
         self.job.refresh_from_db()
@@ -81,7 +81,7 @@ class AsyncJobTests(TestCase):
             cancel_job(self.job)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b'late-video')
-        with patch('subtitles.services.inspect_video', return_value=5), patch('subtitles.services.generate_subtitles', side_effect=generate), patch('subtitles.services.burn_subtitles', side_effect=render):
+        with patch('subtitles.jobs.get_video_duration', return_value=5), patch('subtitles.jobs.generate_subtitles', side_effect=generate), patch('subtitles.jobs.burn_subtitles', side_effect=render):
             process_job(self.job)
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.CANCELLED)
@@ -94,17 +94,17 @@ class AsyncJobTests(TestCase):
     def test_enqueued_job_can_be_recovered_and_old_message_is_ignored(self, publish):
         from django.core.management import call_command
         from subtitles.tasks import process_video_task
-        enqueue_job(self.job)
+        queue_job(self.job)
         self.job.refresh_from_db()
         old_token = str(self.job.task_token)
         call_command('recover_job', str(self.job.pk), verbosity=0)
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.FAILED)
         self.assertIsNone(self.job.task_token)
-        enqueue_job(self.job)
+        queue_job(self.job)
         self.job.refresh_from_db()
         self.assertNotEqual(str(self.job.task_token), old_token)
-        with patch('subtitles.services.generate_subtitles') as generate:
+        with patch('subtitles.jobs.generate_subtitles') as generate:
             process_video_task.run(str(self.job.pk), self.job.source.name, old_token)
         generate.assert_not_called()
 
@@ -117,7 +117,7 @@ class AsyncJobTests(TestCase):
         call_command('recover_job', str(self.job.pk), verbosity=0)
         self.job.refresh_from_db()
         self.assertIsNotNone(self.job.finished_at)
-        enqueue_job(self.job)
+        queue_job(self.job)
         self.job.refresh_from_db()
         self.assertIsNone(self.job.started_at)
         self.assertIsNone(self.job.finished_at)

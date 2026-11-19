@@ -7,85 +7,65 @@
 
 Схема: Django → балансувальник обчислень → маршрутизатор черг → окремий Redis
 кожного вузла → Celery + Whisper + FFmpeg. PostgreSQL і файлове сховище спільні.
-Перший воркер працює на Ubuntu VM, другий — на Mac.
-[Схема архітектури](Architecture/architecture-two-redis.png).
+На Mac обидва воркери працюють в окремих контейнерах. Кожен має власну чергу Redis.
+[ER-схема БД](Architecture/database-er-diagram.png).
+[Схема розгортання на Mac](Architecture/architecture-two-redis.png).
 
-## Запуск на Ubuntu VM та Mac
+## Запуск на Mac
 
-Перед першим запуском налаштуйте приватну мережу, NFS і файли середовища за
-[інструкцією для двох хостів](deploy/MULTI_HOST.md). Використовуйте однакову
-версію коду на обох машинах. Для HTTPS налаштуйте
-[довіру до локального CA](deploy/HTTPS.md).
-
-На Mac запустіть Redis другого вузла:
+Відкрийте Docker Desktop. У корені проєкту виконайте:
 
 ```sh
-docker compose --env-file .env.worker -f compose.worker.yaml up -d redis
+test -f .env || cp .env.example .env
+docker compose up -d --build --wait
+docker compose ps
 ```
 
-На Ubuntu запустіть координатор і запишіть маркер спільної папки:
+Відкрийте [сайт](http://127.0.0.1:8001/), зареєструйтеся, завантажте відео і
+натисніть «Створити відео із субтитрами». Для першого розпізнавання модель Whisper
+завантажується в кеш. Щоб показати обидва вузли на сторінці `/operations/`,
+увійдіть під staff-акаунтом. Створити адміністратора можна так:
 
 ```sh
-sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f compose.https.yaml up -d --build --wait
-sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f compose.https.yaml exec -T web python manage.py check_deployment --write-marker coordinator
+docker compose exec web python manage.py createsuperuser
 ```
 
-На Mac запустіть воркер і перевірте його журнал:
+Запустіть два довші ролики поспіль, поки перший ще обробляється.
+Перевірте поле «Вузол» у деталях завдань та журнали контейнерів:
 
 ```sh
-docker compose --env-file .env.worker -f compose.worker.yaml up -d --build worker
-docker compose --env-file .env.worker -f compose.worker.yaml logs -f worker
+docker compose logs -f worker1 worker2
 ```
 
-Відкрийте [сайт](https://10.211.55.3:8443/), зареєструйтеся, завантажте ролик і
-натисніть «Створити відео із субтитрами». Для перегляду вузлів і навантаження на
-сторінці `/operations/` створіть staff-акаунт на Ubuntu:
+Диспетчер вибирає доступний вузол за прогнозом часу завершення. Він враховує
+тривалість нового відео й уже призначену роботу. Обидва воркери на Mac ділять
+ресурси одного комп’ютера.
+
+Щоб додати вузол, опишіть у Compose окремий Redis і сервіс Celery з унікальним
+`WORKER_NODE_NAME`. Воркер має використовувати спільні PostgreSQL і `/app/media`.
+У `.env` задайте повний список `WORKER_NODES`, включаючи наявні вузли й новий вузол
+з адресою його Redis. Після оновлення конфігурації диспетчер включить новий вузол
+у балансування, коли отримає його heartbeat.
+
+## Тести на PostgreSQL
+
+Запустіть тести у вебконтейнері після запуску Compose:
 
 ```sh
-sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f compose.https.yaml exec web python manage.py createsuperuser
+docker compose exec web python manage.py test --noinput
 ```
 
-## REST API і Postman
-
-Після встановлення `requirements.txt` виконайте `python manage.py migrate`.
-Отримайте токен для наявного користувача командою `python manage.py drf_create_token YOUR_USERNAME`.
-У Docker додайте `exec web` до тієї самої команди Compose, яку використовуєте на Ubuntu.
-
-Імпортуйте [колекцію Postman](deploy/Titry.postman_collection.json). Задайте для `base_url` HTTPS-адресу
-координатора з [інструкції HTTPS](deploy/HTTPS.md). Задайте `api_token` у локальному
-оточенні Postman. Колекція передає його в заголовку `Authorization: Token <token>`.
-
-| Запит | Результат |
-| --- | --- |
-| `POST /api/jobs/` | `multipart/form-data` з файлом `video` та необов’язковою темою `subtitle_style`. Відповідь `201 Created` містить UUID, а заголовок `Location` веде до статусу. Диспетчер автоматично підбирає завдання з черги. |
-| `GET /api/jobs/<uuid>/` | Статус, етап, вузол, тривалість відео, час і посилання `artifacts.srt` та `artifacts.mp4`, коли відповідні файли доступні. |
-| `GET /api/jobs/<uuid>/subtitles/` | Файл SRT за токеном власника. |
-| `GET /api/jobs/<uuid>/video/` | Готовий MP4 за токеном власника. |
-| `GET /api/operations/` | Для staff. Доступність, завдання в обробці, черга та кількість успішно завершених завдань по вузлах. |
-
-`dispatch_wait_seconds` вимірює час від призначення вузла до старту обробки
-поточної спроби. `processing_seconds` рахується від старту до завершення або
-поточного моменту. `estimated_wait_seconds` є прогнозом для завдань у черзі.
-Поля часу мають значення `null`, якщо відповідних даних ще немає.
-
-У запиті завантаження можна передати `subtitle_language` (наприклад, `uk` або `en`).
-Порожнє або пропущене поле вмикає автоматичне визначення.
-
-Для демонстрації надішліть два завантаження поспіль, збережіть обидва UUID та перевірте
-їхні статуси. Третій ролик покаже чергу, якщо воркери ще обробляють перші два.
-Колекція автоматично підставляє UUID останнього завантаження у запити статусу й файлів.
-Для перевірки іншого завдання змініть `job_id`. Завантажуйте MP4 після статусу `succeeded`.
-
-Для повторюваного порівняння використайте [сценарій вимірювання](deploy/BENCHMARK.md).
+Django створює окрему тестову базу PostgreSQL і видаляє її після прогону.
+Тести одночасного запуску завдань перевіряють блокування рядків PostgreSQL.
 
 ## Налаштування
 
-Повний приклад для Compose — `.env.example`, для VM — `deploy/*.env.example`.
+Приклад для запуску на Mac — `.env.example`.
 
 | Змінна | Типово | Призначення |
 | --- | --- | --- |
 | DJANGO_SECRET_KEY | локальний fallback | Задайте випадковий секрет для демонстраційного сервера |
-| DJANGO_DEBUG | true | Вимкніть на VM |
+| DJANGO_DEBUG | true | Режим налагодження Django |
 | DJANGO_ALLOWED_HOSTS | localhost,127.0.0.1 | Дозволені host/IP без порту |
 | POSTGRES_DB / USER / PASSWORD / HOST / PORT | web_project / користувач ОС / порожній / 127.0.0.1 / 5432 | База станів |
 | MEDIA_ROOT | media/ | Спільні джерела, SRT і MP4 |
@@ -94,7 +74,7 @@ sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f c
 | MAX_UPLOAD_BYTES | 1073741824 | 1 ГіБ |
 | MAX_VIDEO_SECONDS | 3600 | Максимум 1 година |
 | ALLOWED_VIDEO_EXTENSIONS | mp4,mov,mkv,webm,avi | Перелік розширень |
-| MAX_ACTIVE_JOBS_PER_USER | 3 | queued/running, включно з ще не запущеними upload |
+| MAX_ACTIVE_JOBS_PER_USER | 3 | Завантажені, поставлені в чергу та запущені завдання |
 | JOB_TIMEOUT_SECONDS | 7200 | Загальний бюджет спроби в секундах |
 | MEDIA_PROBE_TIMEOUT / FFMPEG_TIMEOUT | 20 / 600 | Ліміти перевірки та підготовки аудіо в секундах |
 | TRANSCRIBE_TIMEOUT / VIDEO_RENDER_TIMEOUT | 3600 / 3600 | Ліміти Whisper і рендеру в секундах |
@@ -106,32 +86,39 @@ sudo docker compose --env-file .env.coordinator -f compose.coordinator.yaml -f c
 | DISPATCH_INTERVAL_SECONDS / DISPATCH_RESERVATION_SECONDS | 2 / 15 | Цикл dispatcher / повтор незавершеної публікації |
 | MAX_DISPATCH_ATTEMPTS | 5 | Межа спроб передачі |
 | ETA_FALLBACK_SECONDS | 60 | Приблизна тривалість без історичних вимірювань |
-| DJANGO_SECURE_COOKIES / DJANGO_TRUST_PROXY / DJANGO_SECURE_SSL_REDIRECT | false | Вмикає HTTPS-overlay |
-| DJANGO_CSRF_TRUSTED_ORIGINS | порожній | Точні scheme/host/port |
-| HTTPS_HOST / HTTPS_PORT | із env / 8443 | Приватний TLS endpoint |
 
 ## Пояснення архітектури й SOLID
 
-| Компонент | Відповідальність |
+| Файл | Що тут шукати |
 | --- | --- |
-| Django views/forms | Авторизація, HTTP, перевірка введення та приватні файли |
-| services.py | Життєвий цикл задачі й захист переходів токеном |
-| LeastLoadedBalancer | Вибір доступного вузла за прогнозом завершення нового відео й чергування при рівності |
-| RedisQueueRouter | Публікація в Redis обраного вузла |
-| dispatch_jobs | Повтор спроб, відновлення після втрати вузла |
-| Redis | Окрема черга повідомлень кожного вузла |
-| Celery | Виконання фонових задач і heartbeat |
-| Whisper / FFmpeg | Розпізнавання / аудіо та текст у кадрі |
-| PostgreSQL | Користувачі, задачі, вузли, навантаження, токени та час |
-| NFS / media volume | Єдині файли для Django та всіх воркерів |
-| monitoring.py | Оцінка очікування та зведення навантаження |
-| Caddy | TLS перед Django |
+| `urls.py` | Адреси сторінок і відповідні view-функції |
+| `views.py` | Реєстрація, завантаження, історія, сторінка завдання та стан системи |
+| `forms.py` | Поля форми, мова й стиль субтитрів, перевірка введення |
+| `models.py` | Таблиці `Job` і `WorkerNode`, поля та зв’язки |
+| `jobs.py` | `create_job()` → `queue_job()` → `process_job()`, скасування й перевірка токена |
+| `dispatcher.py` | `sync_worker_nodes()`, `dispatch_next_job()`, передача в Redis, повторне призначення та heartbeat |
+| `balancing.py` | `WorkerBalancer`, `WorkloadForecast`, доступність вузлів, прогноз очікування та зведення навантаження |
+| `tasks.py` | Celery отримує повідомлення, перевіряє токен і викликає `process_job()` |
+| `processing.py` | Перевірка відео, FFprobe, FFmpeg, генерація SRT, вбудовування субтитрів і ліміти часу |
+| `speech.py` | Запуск Whisper в окремому процесі й повернення розпізнаних фрагментів у JSON |
+| `downloads.py` | Видача SRT і MP4, завантаження та перемотування відео через HTTP Range |
+| `languages.py`, `subtitle_styles.py` | Дозволені мови й стилі субтитрів |
 
-SRP: HTTP, вибір вузла, публікація та обробка файлів розділені. OCP: додавання
-вузла через WORKER_NODES не змінює алгоритм вибору. LSP: реалізації
-SpeechRecognizer/TaskRouter дотримуються контрактів сегментів/публікації.
-ISP: ці Protocol містять лише потрібні recognize/publish. DIP: обробка й
-Dispatcher приймають ці вузькі залежності, що дозволяє підставляти інші реалізації.
+Для захисту простежте шлях одного відео. `views.py` приймає запит,
+`jobs.py` створює завдання та ставить його в чергу, `dispatcher.py`
+вибирає вузол за прогнозом із `balancing.py` і публікує повідомлення в Redis.
+Celery викликає `tasks.py`, а той запускає `process_job()` із `jobs.py`.
+Функція керує етапами обробки через `processing.py`, зберігає шляхи SRT/MP4
+і статус у PostgreSQL. `downloads.py` віддає результат користувачу.
+
+Кожен модуль відповідає за один етап роботи (SRP). Прогноз часу та навантаження
+зібрані в `balancing.py`, а призначення вузла й сигнали його доступності —
+у `dispatcher.py`. `speech.py` виконується окремим процесом, щоб можна було
+обмежити час розпізнавання та зупинити його після скасування.
+Додавання вузла через `WORKER_NODES` не потребує змін алгоритму (OCP).
+`TaskRouter` і `SpeechRecognizer` задають вузькі контракти (ISP). У тестах
+можна підмінити маршрутизатор або розпізнавач реалізацією з тим самим контрактом
+(LSP і DIP).
 
 Диспетчер і прогноз очікування використовують до 50 останніх успішних завдань
 доступних вузлів. Швидкість вузла оцінюється як відношення сумарного часу обробки
@@ -144,5 +131,5 @@ Dispatcher приймають ці вузькі залежності, що до�
 Зміна токена при скасуванні/перепризначенні забороняє старій спробі публікувати
 результат. Відновлення починає нову спробу, не переносить проміжний прогрес
 Whisper; готовий SRT може бути використаний повторно. Повтор CPU-обчислень
-можливий до перевірки токена. PostgreSQL і NFS на A залишаються єдиними точками
+можливий до перевірки токена. PostgreSQL і спільне медіасховище залишаються єдиними точками
 відмови. Локальна конфігурація використовує Django runserver для навчальної демонстрації.

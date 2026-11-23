@@ -1,5 +1,5 @@
 .git
-.superpowers
+.deployment-artifacts
 .venv
 venv
 __pycache__

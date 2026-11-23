@@ -4,7 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
-from subtitles.scheduling import Dispatcher, sync_nodes
+from subtitles.dispatcher import dispatch_next_job, requeue_stalled_jobs, sync_worker_nodes
 
 
 class Command(BaseCommand):
@@ -14,14 +14,13 @@ class Command(BaseCommand):
         parser.add_argument('--once', action='store_true')
 
     def handle(self, *args, **options):
-        sync_nodes()
-        dispatcher = Dispatcher()
+        sync_worker_nodes()
         try:
             while True:
                 close_old_connections()
-                dispatcher.recover()
+                requeue_stalled_jobs()
                 for _ in range(100):
-                    if not dispatcher.dispatch_once():
+                    if not dispatch_next_job():
                         break
                 if options['once']:
                     return

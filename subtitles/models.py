@@ -1,8 +1,32 @@
-import uuid
 from pathlib import Path
+import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import TextChoices
+
+
+class SubtitleLanguage(models.TextChoices):
+    AUTO = '', 'Визначити автоматично'
+    UKRAINIAN = 'uk', 'Українська'
+    ENGLISH = 'en', 'Англійська'
+    POLISH = 'pl', 'Польська'
+    GERMAN = 'de', 'Німецька'
+    FRENCH = 'fr', 'Французька'
+    SPANISH = 'es', 'Іспанська'
+    ITALIAN = 'it', 'Італійська'
+    CZECH = 'cs', 'Чеська'
+    PORTUGUESE = 'pt', 'Португальська'
+    RUSSIAN = 'ru', 'Російська'
+
+
+class SubtitleStyle(TextChoices):
+    CLASSIC = 'classic', 'Класичний'
+    YELLOW = 'yellow', 'Жовтий акцент'
+    DARK_BOX = 'dark-box', 'Темна плашка'
+    CINEMA = 'cinema', 'Кіно'
+    NEON = 'neon', 'Неон'
+    STUDIO = 'studio', 'Студія'
 
 
 def video_upload_path(job, filename):
@@ -24,19 +48,26 @@ class WorkerNode(models.Model):
 
 class Job(models.Model):
     class Status(models.TextChoices):
+        UPLOADED = 'uploaded', 'Завантажено'
         QUEUED = 'queued', 'Очікує обробки'
         RUNNING = 'running', 'Обробляється'
         SUCCEEDED = 'succeeded', 'Завершено'
         FAILED = 'failed', 'Помилка'
         CANCELLED = 'cancelled', 'Скасовано'
 
+    ACTIVE = (Status.UPLOADED, Status.QUEUED, Status.RUNNING)
+    CAN_START = (Status.UPLOADED, Status.FAILED)
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='jobs')
     original_name = models.CharField(max_length=255)
+    duration_seconds = models.FloatField(null=True, blank=True)
     source = models.FileField(upload_to=video_upload_path, unique=True, max_length=512)
     subtitles = models.FileField(upload_to='subtitles/', blank=True, max_length=512)
+    subtitle_style = models.CharField(max_length=16, choices=SubtitleStyle.choices, default=SubtitleStyle.CLASSIC)
+    subtitle_language = models.CharField(max_length=2, choices=SubtitleLanguage.choices, blank=True, default=SubtitleLanguage.AUTO)
     result = models.FileField(upload_to='rendered/', blank=True, max_length=512)
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.UPLOADED)
     node_name = models.CharField(max_length=100, blank=True)
     task_token = models.UUIDField(null=True, blank=True)
     stage = models.CharField(max_length=100, default='Очікує запуску')

@@ -23,7 +23,7 @@ class JobViewTests(TestCase):
         self.media = override_settings(MEDIA_ROOT=self.directory.name)
         self.media.enable()
         self.addCleanup(self.media.disable)
-        inspect_patch = patch('subtitles.services.inspect_video', return_value=5)
+        inspect_patch = patch('subtitles.tasks.get_video_duration', return_value=5)
         inspect_patch.start()
         self.addCleanup(inspect_patch.stop)
         self.user = get_user_model().objects.create_user('alice', password='test-password-142')
@@ -35,7 +35,7 @@ class JobViewTests(TestCase):
         source.write_bytes(b'video')
 
     def submit_and_run(self, follow=False):
-        from subtitles.services import process_job
+        from subtitles.tasks import process_job
         response = self.client.post(reverse('process_video', args=[self.job.pk]))
         if response.status_code == 302:
             self.job.refresh_from_db()
@@ -49,6 +49,32 @@ class JobViewTests(TestCase):
         self.client.logout()
         for url in ('/', '/history/', reverse('job_detail', args=[self.job.pk]), reverse('process_video', args=[self.job.pk]), reverse('video_result', args=[self.job.pk]), reverse('download_subtitles', args=[self.job.pk])):
             self.assertEqual(self.client.get(url).status_code, 302)
+
+    def test_video_supports_byte_ranges_for_seeking(self):
+        self.job.status = Job.Status.SUCCEEDED
+        self.job.result = 'rendered/lesson.mp4'
+        self.job.save(update_fields=['status', 'result'])
+        result = Path(self.job.result.path)
+        result.parent.mkdir()
+        result.write_bytes(b'0123456789')
+        url = reverse('video_result', args=[self.job.pk])
+
+        for requested, expected_range, content in (
+            ('bytes=2-4', 'bytes 2-4/10', b'234'),
+            ('bytes=7-', 'bytes 7-9/10', b'789'),
+            ('bytes=-2', 'bytes 8-9/10', b'89'),
+        ):
+            with self.subTest(requested=requested):
+                response = self.client.get(url, HTTP_RANGE=requested)
+                self.assertEqual(response.status_code, 206)
+                self.assertEqual(response['Accept-Ranges'], 'bytes')
+                self.assertEqual(response['Content-Range'], expected_range)
+                self.assertEqual(response['Content-Length'], str(len(content)))
+                self.assertEqual(b''.join(response.streaming_content), content)
+
+        response = self.client.get(url, HTTP_RANGE='bytes=10-')
+        self.assertEqual(response.status_code, 416)
+        self.assertEqual(response['Content-Range'], 'bytes */10')
 
     def test_registration_logs_in(self):
         self.client.logout()
@@ -99,25 +125,65 @@ class JobViewTests(TestCase):
         self.assertRedirects(response, reverse('job_detail', args=[job.pk]))
         self.assertEqual(job.owner, self.user)
         self.assertEqual(Path(job.source.path).read_bytes(), b'new-video')
-        self.assertEqual(job.status, Job.Status.QUEUED)
+        self.assertEqual(job.status, Job.Status.UPLOADED)
+        self.assertEqual(job.subtitle_style, 'classic')
+        self.assertEqual(job.subtitle_language, '')
+
+    def test_upload_saves_selected_subtitle_style(self):
+        response = self.client.post('/', {
+            'video': SimpleUploadedFile('accent.mp4', b'new-video'),
+            'subtitle_style': 'yellow',
+            'subtitle_language': 'uk',
+        })
+        job = Job.objects.get(original_name='accent.mp4')
+        self.assertRedirects(response, reverse('job_detail', args=[job.pk]))
+        self.assertEqual(job.subtitle_style, 'yellow')
+        self.assertEqual(job.subtitle_language, 'uk')
+        self.assertContains(self.client.get(response.url), 'Стиль субтитрів — Жовтий акцент')
+
+    def test_upload_page_offers_the_new_subtitle_themes(self):
+        response = self.client.get('/')
+        for theme in ('cinema', 'neon', 'studio'):
+            with self.subTest(theme=theme):
+                self.assertContains(response, f'name="subtitle_style" value="{theme}"')
+
+    def test_upload_saves_a_new_theme(self):
+        response = self.client.post('/', {
+            'video': SimpleUploadedFile('theme.mp4', b'new-video'),
+            'subtitle_style': 'studio',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Job.objects.get(original_name='theme.mp4').subtitle_style, 'studio')
+
+    def test_upload_rejects_unsupported_subtitle_style(self):
+        response = self.client.post('/', {
+            'video': SimpleUploadedFile('invalid.mp4', b'new-video'),
+            'subtitle_style': 'Fontsize=100',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('subtitle_style', response.context['form'].errors)
+        self.assertFalse(Job.objects.filter(original_name='invalid.mp4').exists())
 
     def test_empty_and_invalid_upload(self):
         for data in ({}, {'video': SimpleUploadedFile('bad.txt', b'text')}):
             self.assertIn('video', self.client.post('/', data).context['form'].errors)
 
     def test_processing_success_records_results_and_prevents_duplicate_work(self):
+        self.job.subtitle_language = 'uk'
+        self.job.save(update_fields=['subtitle_language'])
         def generate(source, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('1\n00:00:00,000 --> 00:00:01,000\nHello\n', encoding='utf-8')
         def render(source, captions, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b'mp4-result')
-        with patch('subtitles.services.generate_subtitles', side_effect=generate) as transcribe, patch('subtitles.services.burn_subtitles', side_effect=render):
+        with patch('subtitles.tasks.generate_subtitles', side_effect=generate) as transcribe, patch('subtitles.tasks.burn_subtitles', side_effect=render):
             response = self.submit_and_run(follow=True)
             self.submit_and_run()
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.SUCCEEDED)
         self.assertEqual(transcribe.call_count, 1)
+        self.assertEqual(transcribe.call_args.kwargs['language'], 'uk')
         self.assertContains(response, '<video')
         self.assertContains(response, 'Завантажити SRT')
         self.assertEqual(b''.join(self.client.get(reverse('video_result', args=[self.job.pk])).streaming_content), b'mp4-result')
@@ -127,7 +193,7 @@ class JobViewTests(TestCase):
         self.assertIn(b'Hello', b''.join(self.client.get(reverse('download_subtitles', args=[self.job.pk])).streaming_content))
 
     def test_processing_failure_is_persisted(self):
-        with patch('subtitles.services.generate_subtitles', side_effect=ProcessingError('Файл пошкоджений.')):
+        with patch('subtitles.tasks.generate_subtitles', side_effect=ProcessingError('Файл пошкоджений.')):
             response = self.submit_and_run(follow=True)
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.FAILED)
@@ -136,7 +202,7 @@ class JobViewTests(TestCase):
 
     def test_running_job_does_not_start_twice(self):
         Job.objects.filter(pk=self.job.pk).update(status=Job.Status.RUNNING)
-        with patch('subtitles.services.generate_subtitles') as generate:
+        with patch('subtitles.tasks.generate_subtitles') as generate:
             self.submit_and_run()
         generate.assert_not_called()
 
@@ -150,20 +216,6 @@ class JobViewTests(TestCase):
         browser.force_login(self.user)
         self.assertEqual(browser.post('/').status_code, 403)
         self.assertEqual(browser.post(reverse('process_video', args=[self.job.pk])).status_code, 403)
-
-    def test_explicit_legacy_import_is_idempotent_and_keeps_owner(self):
-        from django.core.management import call_command
-        legacy = Path(self.directory.name) / 'videos' / 'old.mp4'
-        legacy.write_bytes(b'old-video')
-        captions = Path(self.directory.name) / 'subtitles'
-        captions.mkdir()
-        (captions / 'old.mp4.srt').write_text('captions', encoding='utf-8')
-        call_command('import_legacy_videos', owner='alice', verbosity=0)
-        call_command('import_legacy_videos', owner='bob', verbosity=0)
-        job = Job.objects.get(source='videos/old.mp4')
-        self.assertEqual(job.owner, self.user)
-        self.assertEqual(job.subtitles.name, 'subtitles/old.mp4.srt')
-        self.assertEqual(Job.objects.filter(source='videos/old.mp4').count(), 1)
 
     def test_missing_result_file_returns_404(self):
         Job.objects.filter(pk=self.job.pk).update(status=Job.Status.SUCCEEDED, result='rendered/gone.mp4', subtitles='subtitles/gone.srt')
@@ -180,19 +232,27 @@ class JobViewTests(TestCase):
         self.assertContains(self.client.get(reverse('job_detail', args=[self.job.pk])), 'Створити відео із субтитрами')
 
     def test_render_failure_keeps_srt_for_retry(self):
+        response = self.client.post('/', {
+            'video': SimpleUploadedFile('retry.mp4', b'new-video'),
+            'subtitle_style': 'dark-box',
+        })
+        self.job = Job.objects.get(original_name='retry.mp4')
+        self.assertRedirects(response, reverse('job_detail', args=[self.job.pk]))
+
         def generate(source, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text('captions', encoding='utf-8')
         def render(source, captions, destination, **kwargs):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b'mp4')
-        with patch('subtitles.services.generate_subtitles', side_effect=generate) as generate_mock, patch('subtitles.services.burn_subtitles', side_effect=ProcessingError('Кодування перервано.')), self.assertLogs('subtitles.services', level='ERROR'):
+        with patch('subtitles.tasks.generate_subtitles', side_effect=generate) as generate_mock, patch('subtitles.tasks.burn_subtitles', side_effect=ProcessingError('Кодування перервано.')), self.assertLogs('subtitles.tasks', level='ERROR'):
             self.submit_and_run()
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.FAILED)
         self.assertTrue(Path(self.job.subtitles.path).is_file())
-        with patch('subtitles.services.generate_subtitles') as second_generate, patch('subtitles.services.burn_subtitles', side_effect=render):
+        with patch('subtitles.tasks.generate_subtitles') as second_generate, patch('subtitles.tasks.burn_subtitles', side_effect=render) as second_render:
             self.submit_and_run()
         second_generate.assert_not_called()
+        self.assertEqual(second_render.call_args.kwargs.get('subtitle_style'), 'dark-box')
         self.job.refresh_from_db()
         self.assertEqual(self.job.status, Job.Status.SUCCEEDED)
